@@ -15,6 +15,7 @@ eg:
 
 @dataclass
 class ShapeN(Shape):
+    "recommended to copy the desciption from the NEMESIS manual here (use triple quotes!)"
     ID:  ClassVar[int] = N
     arg_name_1: type_1
     arg_name_2: type_2
@@ -36,6 +37,10 @@ class Shape:
 
 @dataclass
 class Shape0(Shape):
+    """Profile is to be treated as continuous over the pressure range of runname.ref, the
+next line of the .apr file should then contain a filename, which specifies the a
+priori profile as a function of height and should have the same number of levels
+as the .ref file."""
     ID: ClassVar[int] = 0
     filepath: str
 
@@ -45,6 +50,10 @@ class Shape0(Shape):
 
 @dataclass
 class Shape1(Shape):
+    """Profile is to be represented as a deep value up to a certain ‘knee’ pressure, and
+then a defined fractional scale height. The next line of the .apr file then contains
+the ‘knee’ pressure, followed by the a priori deep and fractional scale height
+values together with their estimated errors. """
     ID: ClassVar[int] = 1
     knee_pressure: float
     deep_vmr: float
@@ -58,6 +67,15 @@ class Shape1(Shape):
 
 @dataclass
 class Shape32(Shape):
+    """Similar to model 8 in that profile is a cloud profile represented by a variable
+base pressure, specific density at the level and fractional scale height. The next
+line of the .apr file then contains the a priori base pressure, followed by the a
+priori opacity and fractional scale height values together with their estimated
+errors. All quantities are taken as logs so negative fractional scale heights are
+not allowed. Difference from Model 8 is that cloud density at pressures greater
+than the base pressure is set to drop exponentially with increasing pressure with
+a scale height of 1km, rather than just being set to zero. This makes it easier for
+NEMESIS to actually find an optimal value of the knee pressure."""
     ID:  ClassVar[int] = 32
     base_pressure: float
     base_pressure_error: float
