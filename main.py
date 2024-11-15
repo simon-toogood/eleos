@@ -20,17 +20,22 @@ aero_shape = shapes.Shape32(base_pressure=1e2,
                             fsh_error=0.2)
 aero_profile = profiles.AerosolProfile(aerosol_id=1, shape=aero_shape)
 
-temp_profile = profiles.TemperatureProfile(filepath="tempapr.dat")
+temp_profile = profiles.TemperatureProfile(filepath="./data/jupiter/tempapr.dat")
 
 
 core = cores.NemesisCore(directory=f"core_test/",
-                        spx_file="/home/s/scat2/NEMESIS/2022_JupSouthPole/jwst_mrs.spx",
-                        ref_file="data/jupiter.ref",
+                        spx_file="/home/s/scat2/JWST/2022_JupSouthPole/zonal_spectra/sparse_55.0degS.spx",
+                        ref_file="data/jupiter/jupiter.ref",
                         profiles=[temp_profile, nh3_profile, aero_profile])
 
 core._generate_default_core()
+
 
 # import results
 # res = results.NemesisResult("nemesis", "/home/s/scat2/NEMESIS/2022_JupSouthPole/core_0/")
 # fig, ax = res.plot_spectrum()
 # fig.savefig("spectrum.png", dpi=500)
+
+# TODO for tomorrow!
+# if temp retrieval copy tempapr.dat over
+# PHASE1.DAT and hgphase1.dat not needed for thermal run, but nemesis.xsc is

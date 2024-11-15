@@ -1,4 +1,5 @@
 import pandas as pd
+import os
 
 
 def _read_radtrans_gas_id():
@@ -11,6 +12,7 @@ def _read_radtrans_gas_id():
     df.columns = ["radtrans_id", "name", "H04", "G03", "H12", "H16", "N_iso", "isotopes"]
     return df
 
+PATH = os.path.dirname(__file__) + "/"
 
 GASES = _read_radtrans_gas_id()
 

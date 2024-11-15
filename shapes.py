@@ -1,5 +1,6 @@
 from dataclasses import dataclass
 from typing import ClassVar
+import shutil
 
 
 """ HOW TO ADD A SHAPE: 
@@ -11,7 +12,12 @@ All subclasses of Shape must implement:
     - generate_apr_data: Returns a string of the profile shape parameters in the format
                          that the .apr file expects.
 
-eg:
+Additionally, some shapes require additional files in the core (eg. tempapr.dat). If this is the case,
+override the copy_required_files method.
+
+Finally, add the new ShapeN class to the ALL_SHAPES list at the end of the file.
+
+Class template:
 
 @dataclass
 class ShapeN(Shape):
@@ -23,8 +29,6 @@ class ShapeN(Shape):
 
     def generate_apr_data(self):
         return a string for apr file
-        
-Finally, add the new ShapeN class to the ALL_SHAPES list at the end of the file
 
 """
 
@@ -32,6 +36,10 @@ Finally, add the new ShapeN class to the ALL_SHAPES list at the end of the file
 class Shape:
     def __init__(self):
         """Do not instantiate directly, use a subclass"""
+        pass
+
+    def copy_required_files(self, directory):
+        """Some Shapes require additional files to be copied into the core directory"""
         pass
 
 
@@ -44,7 +52,11 @@ as the .ref file."""
     ID: ClassVar[int] = 0
     filepath: str
 
+    def copy_required_files(self, directory):
+        shutil.copy(self.filepath, directory)
+
     def generate_apr_data(self):
+        """Return the string used to describe the profile in nemesis.apr. In this case, also copy the file specified into the core directory"""
         return self.filepath
 
 

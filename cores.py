@@ -1,6 +1,8 @@
 import os
 import shutil
 import pandas as pd
+import pkgutil
+
 from jwstools import spx
 
 import constants
@@ -13,12 +15,12 @@ import constants
 #     * nemesis.fla (various flags)
 #     * nemesis.cia (pointer to collision-induced opacity file)
 #     * nemesis.kls (list of k-tables)
-#     - nemesis.ref (reference heights, pressures, temps and composition)
+#     * nemesis.ref (reference heights, pressures, temps and composition)
 #     * nemesis.xsc (aerosol cross-sections)
 #     * nemesis.set (scattering angles, layer info)
 #     * nemesis.apr (a priori file containing vars to retrieve)
 #     * nemesis.spx (spectrum)
-#   **  .abo, .nam
+#    ** .abo, .nam
 #   
 
 class NemesisCore:
@@ -55,12 +57,27 @@ class NemesisCore:
         df = pd.read_table(self.ref_file, skiprows=skip_to+1, sep="\s+", names=["height", "pressure", "temp"] + [f"VMR gas {n+1}" for n in range(n_gas)])
         return df
 
+    def copy_input_files(self):
+        """Copy the given .spx and .ref file into the core
+        
+        Args:
+            None
+            
+        Returns:
+            None
+            
+        Creates:
+            nemesis.spx
+            nemesis.ref"""
+
+        shutil.copy(self.ref_file, self.directory+"nemesis.ref")
+        shutil.copy(self.spx_file, self.directory+"nemesis.spx")
+
     def copy_template_files(self):
-        template_core = "./data/template_core/"
-        shutil.copy(template_core+"nemesis.cia", self.directory)
-        shutil.copy(template_core+"nemesis.abo", self.directory)
-        shutil.copy(template_core+"nemesis.nam", self.directory)
-        shutil.copy(template_core+"parah2.ref" , self.directory)
+        shutil.copy(constants.PATH + "data/statics/nemesis.cia", self.directory)
+        shutil.copy(constants.PATH + "data/statics/nemesis.abo", self.directory)
+        shutil.copy(constants.PATH + "data/statics/nemesis.nam", self.directory)
+        shutil.copy(constants.PATH + f"data/{self.planet}/parah2.ref" , self.directory)
 
     def generate_apr(self):
         """Generate the nemesis.apr file from the profile list
@@ -75,6 +92,7 @@ class NemesisCore:
             nemesis.apr"""
         out = f"*******Apriori File*******\n           {len(self.profiles)}\n"
         for profile in self.profiles:
+            profile.shape.copy_required_files(self.directory)
             out += profile.generate_apr_data() + "\n"
         with open(self.directory + "nemesis.apr", mode="w") as file:
             file.write(out)
@@ -92,7 +110,7 @@ class NemesisCore:
         Creates:
             nemesis.set"""
         
-        with open("./data/template_core/nemesis.set", mode="r") as file:
+        with open(constants.PATH+"data/statics/template.set", mode="r") as file:
             out = file.read()
         out = out.replace("<DISTANCE>", f"{constants.DISTANCES[self.planet]:.3f}")
         out = out.replace("<SUNLIGHT>", f"{int(self.scattering)}")
@@ -166,9 +184,9 @@ class NemesisCore:
         TODO:
             Add way to include/exclude different elements"""
         if instrument == "NIRSPEC":
-            shutil.copy("./data/template_core/nirspec.kls", self.directory+"nemesis.kls")
+            shutil.copy(constants.PATH+"data/jupiter/nirspec.kls", self.directory+"nemesis.kls")
         elif instrument == "MIRI":
-            shutil.copy("./data/template_core/miri.kls", self.directory+"nemesis.kls")
+            shutil.copy(constants.PATH+"data/jupiter/miri.kls", self.directory+"nemesis.kls")
 
     def generate_fmerror(self, factor=3):
         """For each wavelength in the spx file, multiply the error by factor. only supports 1 spx geom"""
@@ -225,6 +243,7 @@ class NemesisCore:
         os.chdir(cwd)
 
     def _generate_default_core(self):
+        self.copy_input_files()
         self.copy_template_files()
         self.generate_apr()
         self.generate_set()
