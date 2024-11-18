@@ -1,0 +1,15 @@
+#!/bin/bash
+#
+#SBATCH --job-name=nemesis
+#SBATCH --account=nemesis
+#SBATCH --time=<HOURS>:00:00
+#SBATCH --mem=<MEMORY>gb
+#SBATCH --mail-type=BEGIN,END,FAIL
+#SBATCH --mail-user=<USERNAME>@leicester.ac.uk
+#SBATCH --export=NONE
+#SBATCH --cpus-per-task=1
+#SBATCH --array=[1-<N_CORES>]
+
+inputdir=<CORE_DIR>/core_${SLURM_ARRAY_TASK_ID}
+cd $inputdir
+Nemesis < nemesis.nam > log_${SLURM_ARRAY_TASK_ID}

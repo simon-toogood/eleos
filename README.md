@@ -1,4 +1,4 @@
-# Eleos - A Python wrapper for NEMESIS
+# Eleos - A Python interface to NEMESIS
 
 
 ## Current hierarchy

@@ -1,0 +1,8 @@
+       1       <SCATTERING>       0              ! ispace,iscat
+0.0               ! Wavenumber offset to add to measured spectrum
+fmerror.dat
+      <N_ITERATIONS>  ! Number of iterations
+0.1               ! Minimum % change in phi before terminating
+1 1   ! Total spectra to fit and starting ID
+       0  ! Dont substitute previous retrievals
+       0   ! Output format
