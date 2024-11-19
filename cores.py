@@ -285,15 +285,29 @@ class NemesisCore:
             shutil.copy(constants.PATH+"data/jupiter/miri.kls", self.directory+"nemesis.kls")
 
     def _generate_fmerror(self):
-        """For each wavelength in the spx file, multiply the error by factor. only supports 1 spx geom"""
+        """For each wavelength in the spx file, multiply the error by factor. Currently only supports 1 spx geometry
+        Args:
+            None
+            
+        Returns:
+            None
+        
+        Creates:
+            fmerror.dat """
         spx_data = spx.read(self.spx_file).geometries[0]
         num_entries = len(spx_data.wavelengths)
         if num_entries > 2048:
             raise IndexError(f"spx file has too many wavelengths! ({num_entries}/2048)")
         with open(self.directory + "fmerror.dat", mode="w+") as file:
-            file.write(f"{num_entries}\n")
+            # Header with number of lines 
+            file.write(f"{num_entries+2}\n")
+            # Catch any cases outside the wavelength range (lower)
+            file.write(f"{0.1:.6e}  {1e-8:.6e}\n")
+            # Scale the spx error
             for wl, err in zip(spx_data.wavelengths, spx_data.error):
                 file.write(f"{wl:.6e}  {err*self.fmerror_factor:.6e}\n")
+            # Catch any cases outside the wavelength range (upper)
+            file.write(f"{100:.6e}  {1e-8:.6e}\n")
 
     def _generate_xsc(self):
         """Run Makephase and Normxsc with the given inputs to generate the .xsc file containing aerosol refractive indicies.
@@ -301,14 +315,7 @@ class NemesisCore:
         Currently only supports mode 1 (Mie scattering, gammma dist.) and constant refractive index over range.
         
         Args:
-            num_aerosol_modes: The number of aerosol modes to create. CURRENTLY ONLY SUPPORTS 1
-            start_wl: The shortest wavelength (in microns) to compute the refractive index for
-            end_wl: The longest wavelength (in microns) to computethe refractive index for
-            delta_wl: Wavelength resolution (in microns)
-            radius: The mean radius of the particles (in microns)
-            variance: The varaince of the particle radius (in microns)
-            real_refractive_index: The real component of the refractive index of the particles
-            imag_refractive_index: The imaginary component of frefractive index for the particles
+            None
             
         Returns:
             None
@@ -326,8 +333,8 @@ class NemesisCore:
 
         # Read in wavelengths bounds from spx file
         wls = spx.read(self.spx_file).geometries[0].wavelengths
-        start_wl = min(wls)
-        end_wl = max(wls)
+        start_wl = min(wls) - 0.1
+        end_wl = max(wls) + 0.1
 
         # Split the refactive index into real and imag
         real_n = self.aerosol_refactive_index.real
@@ -359,7 +366,8 @@ class NemesisCore:
         self._generate_kls()
         self._generate_fmerror()
         self._generate_xsc()
-
+        if self.scattering:
+            pass
 
     def generate_cloudf(self, wavelengths, imag_refractive_index, imag_refractive_index_err):
         """Generate the cloudf1.dat file. I dont really know what this does or why it exists but thats a problem for later.

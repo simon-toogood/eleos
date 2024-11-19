@@ -8,7 +8,7 @@ All subclasses of Shape must implement:
     - ID: Integer ID of the shape in NEMESIS
     - __init__: Instantiates the parent class and defines:
         - nemesis_code: The number of the profile in the NEMESIS manual
-        - Any parameters associated with the model (eg. knee pressure, fsh etc)
+        - Any parameters associated with the model (eg. knee pressure, fsh etc). These MUST be defined in the order that they appear in the .apr file
     - generate_apr_data: Returns a string of the profile shape parameters in the format
                          that the .apr file expects.
 
@@ -21,7 +21,7 @@ Class template:
 
 @dataclass
 class ShapeN(Shape):
-    "recommended to copy the desciption from the NEMESIS manual here (use triple quotes!)"
+    "copy the desciption from the NEMESIS manual here (use triple quotes!)"
     ID:  ClassVar[int] = N
     arg_name_1: type_1
     arg_name_2: type_2
@@ -56,13 +56,12 @@ as the .ref file."""
         shutil.copy(self.filepath, directory)
 
     def generate_apr_data(self):
-        """Return the string used to describe the profile in nemesis.apr. In this case, also copy the file specified into the core directory"""
-        return self.filepath
+        return self.filepath.split("/")[-1]
 
 
 @dataclass
 class Shape1(Shape):
-    """Profile is to be represented as a deep value up to a certain ‘knee’ pressure, and
+    """Profile is to be represented as a deep VMR up to a certain ‘knee’ pressure, and
 then a defined fractional scale height. The next line of the .apr file then contains
 the ‘knee’ pressure, followed by the a priori deep and fractional scale height
 values together with their estimated errors. """
@@ -107,4 +106,7 @@ def get_shape_from_id(id_):
             return shape_class
 
 
+
+
 ALL_SHAPES = [Shape0, Shape1, Shape32]
+
