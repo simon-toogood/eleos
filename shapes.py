@@ -20,7 +20,7 @@ Finally, add the new ShapeN class to the ALL_SHAPES list at the end of the file.
 
 Class template:
 
-@dataclass
+@shapeclass
 class ShapeN(Shape):
     "copy the desciption from the NEMESIS manual here (use triple quotes!)"
     ID: ClassVar[int] = N
@@ -36,17 +36,28 @@ class ShapeN(Shape):
 """
 
 
+def shapeclass(*args, **kwargs):
+    return dataclass(*args, **kwargs, repr=False)
+    
+
+
 class Shape:
     def __init__(self):
         """Do not instantiate directly, use a subclass"""
         pass
+
+    def __repr__(self):
+        out = f"Shape:\n    ID: {self.ID}"
+        for name, value in self.__dict__.items():
+            out += f"\n    {name}: {value}"    
+        return out
 
     def copy_required_files(self, directory):
         """Some Shapes require additional files to be copied into the core directory"""
         pass
 
 
-@dataclass
+@shapeclass
 class Shape0(Shape):
     """Profile is to be treated as continuous over the pressure range of runname.ref, the
 next line of the .apr file should then contain a filename, which specifies the a
@@ -63,7 +74,7 @@ as the .ref file."""
         return self.filepath.split("/")[-1]
 
 
-@dataclass
+@shapeclass
 class Shape1(Shape):
     """Profile is to be represented as a deep VMR up to a certain ‘knee’ pressure, and
 then a defined fractional scale height. The next line of the .apr file then contains
@@ -81,7 +92,7 @@ values together with their estimated errors. """
         return f"{self.knee_pressure}\n{self.deep_vmr} {self.deep_vmr_error}\n{self.fsh} {self.fsh_error}"
 
 
-@dataclass
+@shapeclass
 class Shape32(Shape):
     """Similar to model 8 in that profile is a cloud profile represented by a variable
 base pressure, specific density at the level and fractional scale height. The next
@@ -116,3 +127,7 @@ def get_shape_from_id(id_):
 
 ALL_SHAPES = [Shape0, Shape1, Shape32]
 
+
+if __name__ == "__main__":
+    x = Shape1(1,2,3,4,5)
+    print(x)

@@ -50,9 +50,9 @@ class NemesisResult:
                 data = utils.read_between_lines(file, start, end)
                 profile = profiles.create_profile_from_apr(data)
                 self.profiles.append(profile)
-        
+                    
     def read_mre(self):
-        """Read in the nemesis.mre file and """
+        """Read in the nemesis.mre file"""
         mre_file = self.core_directory + "nemesis.mre"
         with open(mre_file) as file:
             mre_data = file.read().split("\n")
@@ -77,8 +77,8 @@ class NemesisResult:
         self.fitted_spectrum = pd.read_table(mre_file, 
                                              names=["wavelength", "measured", "error", "pct_error", "model", "pct_diff"],
                                              index_col=0, sep="\s+", skiprows=5, nrows=blocks[0]-7)
-        print(self.fitted_spectrum)
-        # Read in each retrieved parameter as a DataFrame
+
+        # Read in each retrieved parameter and add the result to the Shape object
         with open(mre_file) as file:
             for profile, (start, end) in zip(self.profiles, it.pairwise(blocks)):
                 data = utils.read_between_lines(file, start, end)
@@ -86,8 +86,16 @@ class NemesisResult:
                 df.drop(["i", "ix"], axis=1, inplace=True)
                 profile.add_result(df)
 
-# index  nothing  prior error  retrieved error
     def plot_spectrum(self):
+        """Plot the fitted spectrum using matplotlib
+        
+        Args:
+            None
+            
+        Returns:
+            fig: The created matplotlib.Figure object
+            ax: The created matplotlib.Axes object
+        """
         fig, ax = plt.subplots(1, 1)
         ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.measured, c="k", lw=0.5, label="Measured")
         ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.model, c="r", lw=0.5, label="Model")
@@ -101,8 +109,8 @@ class NemesisResult:
 
 if __name__ == "__main__":
     res = NemesisResult("cores/core_1/")
-    print(res.profiles)
-    print(res.profiles[1].shape.retrieved_deep_vmr_error)
+    for p in res.profiles:
+        print(p)
     fig, ax = res.plot_spectrum()
     fig.savefig("nosync/spectrum.png", dpi=500)
 

@@ -1,5 +1,6 @@
 import constants
 import shapes
+import utils
 
 
 class Profile:
@@ -16,18 +17,19 @@ class Profile:
         # Get order of parameters
         names = self.shape.NAMES
         if names == ["None"]:
-            print("warning temp not working yet")
-            return
-        assert len(names) == len(df)
-
-        # Set attributes of the child Shape object
-        for name, (_, row) in zip(names, df.iterrows()):
-            for title, value in zip(row.index, row.values):
-                if "prior" in title:
-                    attrname = title.replace("prior", name)
-                elif "retrieved" in title:
-                    attrname = title.replace("retrieved", f"retrieved_{name}")
-                setattr(self.shape, attrname, value)
+            # In this case, it is a temperature retrieval
+            # In the future if I add other profiles that also require a text file then this is going to break spectacularly
+            self.shape.data = df
+        else:
+            assert len(names) == len(df)
+            # Set attributes of the child Shape object
+            for name, (_, row) in zip(names, df.iterrows()):
+                for title, value in zip(row.index, row.values):
+                    if "prior" in title:
+                        attrname = title.replace("prior", name)
+                    elif "retrieved" in title:
+                        attrname = title.replace("retrieved", f"retrieved_{name}")
+                    setattr(self.shape, attrname, value)
 
         # Toggle retrieved flag
         self.retrieved = True
@@ -47,7 +49,7 @@ class TemperatureProfile(Profile):
         return f"<TemperatureProfile [{self.create_nemesis_string()}]>"
 
     def __str__(self):
-        return f"Temperature Profile:\n   File: {self.filepath}\n    Retrieved:{self.retrieved}"
+        return f"TemperatureProfile:\n    File: {self.filepath}\n    Retrieved: {self.retrieved}\n" + utils.indent(str(self.shape))
 
     def create_nemesis_string(self):
         return f"0 0 0"
@@ -83,7 +85,7 @@ class GasProfile(Profile):
         return f"<GasProfile {self.gas_name} [{self.create_nemesis_string()}]>"
 
     def __str__(self):
-        out = f"GasProfile:\n    Species: {self.gas_name}\n    Isotope: {self.isotope_id}"
+        return f"GasProfile:\n    Species: {self.gas_name}\n    Isotope: {self.isotope_id}\n" + utils.indent(str(self.shape))
 
     def create_nemesis_string(self):
         return f"{self.gas_id} {self.isotope_id} {self.shape.ID}"
@@ -103,10 +105,12 @@ class AerosolProfile(Profile):
         self.aerosol_id =abs(aerosol_id)
         self.shape = shape
 
-    def __str__(self):
+    def __repr__(self):
         return f"<AerosolProfile {self.aerosol_id} [{self.create_nemesis_string()}]>"
-    __repr__ = __str__
-    
+
+    def __str__(self):
+        return f"AerosolProfile:\n    ID: {self.aerosol_id}\n    Retrieved: {self.retrieved}\n" + utils.indent(str(self.shape))
+
     def create_nemesis_string(self):
         return f"-{self.aerosol_id} 0 {self.shape.ID}"
     
@@ -149,5 +153,5 @@ def create_profile_from_apr(string):
         profile.filepath = params[0]
         return profile
     else:
-        profile.shape.__init__(profile.shape, *params)
+        profile.shape = profile.shape(*params)
         return profile
