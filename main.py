@@ -39,5 +39,5 @@
 import results
 res = results.NemesisResult("cores/core_1/")
 fig, ax = res.plot_spectrum()
-fig.savefig("spectrum.png", dpi=500)
+fig.savefig("nosync/spectrum.png", dpi=500)
 
