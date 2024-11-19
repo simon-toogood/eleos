@@ -5,10 +5,32 @@ import shapes
 class Profile:
     def __init__(self):
         """Do not instantiate directly, use a subclass"""
-        pass
+        self.retrieved = False
 
-    def add_result(self, result):
-        self.result = result
+    def add_result(self, df):
+        """Take in a DataFrame created by reading in the .mre file (results.NemesisResult.read_mre) and assign the correct attributes
+        
+        Args:
+            df: pandas.DataFrame with columns "prior", "prior_error", "retrieved", "retrieved_error" and a row for each parameter"""
+        
+        # Get order of parameters
+        names = self.shape.NAMES
+        if names == ["None"]:
+            print("warning temp not working yet")
+            return
+        assert len(names) == len(df)
+
+        # Set attributes of the child Shape object
+        for name, (_, row) in zip(names, df.iterrows()):
+            for title, value in zip(row.index, row.values):
+                if "prior" in title:
+                    attrname = title.replace("prior", name)
+                elif "retrieved" in title:
+                    attrname = title.replace("retrieved", f"retrieved_{name}")
+                setattr(self.shape, attrname, value)
+
+        # Toggle retrieved flag
+        self.retrieved = True
 
 
 class TemperatureProfile(Profile):
@@ -21,8 +43,11 @@ class TemperatureProfile(Profile):
         super().__init__()
         self.shape = shapes.Shape0(filepath=filepath)
 
+    def __repr__(self):
+        return f"<TemperatureProfile [{self.create_nemesis_string()}]>"
+
     def __str__(self):
-        return f"TemperatureProfile[{self.create_nemesis_string()}]"
+        return f"Temperature Profile:\n   File: {self.filepath}\n    Retrieved:{self.retrieved}"
 
     def create_nemesis_string(self):
         return f"0 0 0"
@@ -54,8 +79,11 @@ class GasProfile(Profile):
             self.gas_name = gas_name
             self.gas_id = constants.GASES.loc[constants.GASES.name == gas_name].radtrans_id.iloc[0]
 
+    def __repr__(self):
+        return f"<GasProfile {self.gas_name} [{self.create_nemesis_string()}]>"
+
     def __str__(self):
-        return f"GasProfile({self.name}) [{self.create_nemesis_string()}]"
+        out = f"GasProfile:\n    Species: {self.gas_name}\n    Isotope: {self.isotope_id}"
 
     def create_nemesis_string(self):
         return f"{self.gas_id} {self.isotope_id} {self.shape.ID}"
@@ -76,7 +104,8 @@ class AerosolProfile(Profile):
         self.shape = shape
 
     def __str__(self):
-        return f"AerosolProfile([{self.create_nemesis_string()}])"
+        return f"<AerosolProfile {self.aerosol_id} [{self.create_nemesis_string()}]>"
+    __repr__ = __str__
     
     def create_nemesis_string(self):
         return f"-{self.aerosol_id} 0 {self.shape.ID}"

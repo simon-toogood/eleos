@@ -73,18 +73,18 @@ class NemesisResult:
         self.ispec, self.ngeom, self.ny1, self.nx, self.ny2 = self._parse_header_line(header[1], num_fields=5, cast_to=int)
         self.latitude, self.longitude = self._parse_header_line(header[2], num_fields=2, cast_to=float)
 
-        # Read in the data as a DataFrame
+        # Read in the fitted spectrum as a DataFrame
         self.fitted_spectrum = pd.read_table(mre_file, 
                                              names=["wavelength", "measured", "error", "pct_error", "model", "pct_diff"],
                                              index_col=0, sep="\s+", skiprows=5, nrows=blocks[0]-7)
-
-        # Read in each retrieved parameter
+        print(self.fitted_spectrum)
+        # Read in each retrieved parameter as a DataFrame
         with open(mre_file) as file:
             for profile, (start, end) in zip(self.profiles, it.pairwise(blocks)):
                 data = utils.read_between_lines(file, start, end)
-                df = pd.read_table(io.StringIO(data), skiprows=3, sep="\s+", names=["i", "value", "err", ])
-                print(df)
-                #profile.shape.result_matrix = data
+                df = pd.read_table(io.StringIO(data), skiprows=4, sep="\s+", names=["i", "ix", "prior", "prior_error", "retrieved", "retrieved_error"])
+                df.drop(["i", "ix"], axis=1, inplace=True)
+                profile.add_result(df)
 
 # index  nothing  prior error  retrieved error
     def plot_spectrum(self):
@@ -99,4 +99,10 @@ class NemesisResult:
         return fig, ax
 
 
+if __name__ == "__main__":
+    res = NemesisResult("cores/core_1/")
+    print(res.profiles)
+    print(res.profiles[1].shape.retrieved_deep_vmr_error)
+    fig, ax = res.plot_spectrum()
+    fig.savefig("nosync/spectrum.png", dpi=500)
 

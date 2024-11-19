@@ -6,6 +6,7 @@ import shutil
 """ HOW TO ADD A SHAPE: 
 All subclasses of Shape must implement:
     - ID: Integer ID of the shape in NEMESIS
+    - NAMES: The names of the parameters in order they appear in the mre file (do not include error parameters here)
     - __init__: Instantiates the parent class and defines:
         - nemesis_code: The number of the profile in the NEMESIS manual
         - Any parameters associated with the model (eg. knee pressure, fsh etc). These MUST be defined in the order that they appear in the .apr file
@@ -22,9 +23,11 @@ Class template:
 @dataclass
 class ShapeN(Shape):
     "copy the desciption from the NEMESIS manual here (use triple quotes!)"
-    ID:  ClassVar[int] = N
+    ID: ClassVar[int] = N
+    NAMES:  ClassVar[list[str]] = ["arg_name_1", "arg_name_2", ...]
     arg_name_1: type_1
     arg_name_2: type_2
+    arg_name_2_error: type_2
     ...
 
     def generate_apr_data(self):
@@ -50,6 +53,7 @@ next line of the .apr file should then contain a filename, which specifies the a
 priori profile as a function of height and should have the same number of levels
 as the .ref file."""
     ID: ClassVar[int] = 0
+    NAMES: ClassVar[list[str]] = ["None"]
     filepath: str
 
     def copy_required_files(self, directory):
@@ -66,6 +70,7 @@ then a defined fractional scale height. The next line of the .apr file then cont
 the ‘knee’ pressure, followed by the a priori deep and fractional scale height
 values together with their estimated errors. """
     ID: ClassVar[int] = 1
+    NAMES: ClassVar[list[str]] = ["deep_vmr", "fsh"]
     knee_pressure: float
     deep_vmr: float
     deep_vmr_error: float
@@ -88,6 +93,7 @@ than the base pressure is set to drop exponentially with increasing pressure wit
 a scale height of 1km, rather than just being set to zero. This makes it easier for
 NEMESIS to actually find an optimal value of the knee pressure."""
     ID:  ClassVar[int] = 32
+    NAMES: ClassVar[list[str]] = ["base_pressure", "fsh", "opacity"]
     base_pressure: float
     base_pressure_error: float
     opacity: float
