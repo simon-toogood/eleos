@@ -3,6 +3,7 @@ import shutil
 import pandas as pd
 import pkgutil
 import functools
+import pickle
 
 from jwstools import spx
 
@@ -99,7 +100,7 @@ class NemesisCore:
             self.num_iterations = 0
 
         # Parse the ref file:
-        self.ref = self.parse_ref_file()
+        self.ref = parse_ref_file(self.ref_file)
 
         # Raise a warning if not being used at Jupiter
         if planet != "jupiter":
@@ -118,23 +119,9 @@ class NemesisCore:
     def __str__(self):
         return f"<NemesisCore: {self.directory}>"
 
-    def parse_ref_file(self):
-        """Read in the .ref file provided and return a DataFrame
-        
-        Args:
-            None
-            
-        Returns:
-            pandas.DataFrame with columns for height (in km), pressure (in atm), temperature (in K), and the VMRs for all specified gases"""
-        with open(self.ref_file) as file:
-            for i, line in enumerate(file):
-                if "height" in line:
-                    skip_to = i
-                if i == 2:
-                    tokens = line.split()
-                    n_gas = int(tokens[-1])
-        df = pd.read_table(self.ref_file, skiprows=skip_to+1, sep="\s+", names=["height", "pressure", "temp"] + [f"VMR gas {n+1}" for n in range(n_gas)])
-        return df
+    def _save_core(self):
+        with open(self.directory+"core.pkl", mode="wb") as file:
+            pickle.dump(file)
 
     def _copy_input_files(self):
         """Copy the given .spx and .ref file into the core
@@ -366,6 +353,7 @@ class NemesisCore:
         self._generate_kls()
         self._generate_fmerror()
         self._generate_xsc()
+        self._save_core()
         if self.scattering:
             pass
 
@@ -391,6 +379,29 @@ class NemesisCore:
             file.write(header + "\n")
             for wl in wavelengths:
                 file.write(f"{wl} {imag_refractive_index} {imag_refractive_index_err}\n")
+
+
+def parse_ref_file(ref_file):
+    """Read in the .ref file provided and return a DataFrame
+    
+    Args:
+        ref_file: Path to the .ref file
+        
+    Returns:
+        pandas.DataFrame with columns for height (in km), pressure (in atm), temperature (in K), and the VMRs for all specified gases"""
+    with open(ref_file) as file:
+        for i, line in enumerate(file):
+            if "height" in line:
+                skip_to = i
+            if i == 2:
+                tokens = line.split()
+                n_gas = int(tokens[-1])
+    df = pd.read_table(ref_file, skiprows=skip_to+1, sep="\s+", names=["height", "pressure", "temp"] + [f"VMR gas {n+1}" for n in range(n_gas)])
+    return df
+
+
+def load_core(core_directory):
+    return pickle.load(core_directory+"core.pkl")
 
 
 def reset_core_numbering():

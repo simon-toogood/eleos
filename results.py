@@ -6,12 +6,15 @@ import matplotlib.pyplot as plt
 import profiles
 import utils
 import shapes
+import cores
 
 
 class NemesisResult:
     def __init__(self, core_directory):
         """Class for storing the results of a NEMESIS retrieval"""
         self.core_directory = core_directory
+        self.ref = cores.parse_ref_file(self.core_directory+"nemesis.ref")
+        self.core = cores.load_core(self.core_directory)
         self.read_apr()
         self.read_mre()
 
@@ -86,31 +89,53 @@ class NemesisResult:
                 df.drop(["i", "ix"], axis=1, inplace=True)
                 profile.add_result(df)
 
-    def plot_spectrum(self):
+    def plot_temperature(self, ax=None):
+        # Find retrieved temperature profile
+        for p in self.profiles:
+            if isinstance(p, profiles.TemperatureProfile):
+                temp_profile = p
+                break
+        else:
+            raise AttributeError("No retrieved temperature profile found!")
+
+        if ax is None:
+            fig, ax = plt.subplots(1, 1)
+        else:
+            fig = ax.get_figure()
+        ax.plot(temp_profile.shape.data.retrieved, self.ref.height, c="k", lw=0.5, label="Retrieved")
+        ax.plot(temp_profile.shape.data.prior, self.ref.height, c="r", lw=0.5, label="Prior")
+        ax.set_xlabel("Temperature (K)")
+        ax.set_ylabel("Height (km)")
+        ax.legend()
+        return fig, ax
+
+    def plot_spectrum(self, ax=None):
         """Plot the fitted spectrum using matplotlib
         
         Args:
-            None
+            ax: The matplotlib Axes to plot onto. If None then create a new Figure and Axes
             
         Returns:
             fig: The created matplotlib.Figure object
             ax: The created matplotlib.Axes object
         """
-        fig, ax = plt.subplots(1, 1)
-        ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.measured, c="k", lw=0.5, label="Measured")
-        ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.model, c="r", lw=0.5, label="Model")
+        if ax is None:
+            fig, ax = plt.subplots(1, 1)
+        else:
+            fig = ax.get_figure()
+        ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.measured, c="k", lw=0.5, label="Retrieved")
+        ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.model, c="r", lw=0.5, label="Prior")
         ax.set_yscale("log")
         ax.set_xlabel("Wavelength (μm)")
         ax.set_ylabel("Radiance (μW cm$^{-2}$ sr$^{-1}$ μm$^{-1}$)")
         ax.legend()
-        fig.tight_layout()
         return fig, ax
 
 
 if __name__ == "__main__":
     res = NemesisResult("cores/core_1/")
-    for p in res.profiles:
-        print(p)
-    fig, ax = res.plot_spectrum()
-    fig.savefig("nosync/spectrum.png", dpi=500)
-
+    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
+    res.plot_spectrum(ax=ax1)
+    res.plot_temperature(ax=ax2)
+    plt.tight_layout()
+    fig.savefig("nosync/temp.png", dpi=500)

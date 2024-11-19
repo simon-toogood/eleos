@@ -25,12 +25,12 @@ temp_profile = profiles.TemperatureProfile(filepath="./data/jupiter/tempapr.dat"
 
 
 core_list = []
-for n in range(1):
+for n in range(1, 5):
     core = cores.NemesisCore(parent_directory=f"cores/",
                              spx_file="/home/s/scat2/JWST/2022_JupSouthPole/zonal_spectra/sparse_55.0degS.spx",
                              ref_file="data/jupiter/jupiter.ref",
                              profiles=[temp_profile, nh3_profile, aero_profile],
-                             forward=True)
+                             fmerror_factor=n)
     core_list.append(core)
 
 cores.generate_alice_job(cores=core_list, username="scat2")
