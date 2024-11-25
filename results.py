@@ -11,7 +11,10 @@ import cores
 
 class NemesisResult:
     def __init__(self, core_directory):
-        """Class for storing the results of a NEMESIS retrieval"""
+        """Class for storing the results of a NEMESIS retrieval.
+        
+        Attributes:
+            core_directory: """
         self.core_directory = core_directory
         self.ref = cores.parse_ref_file(self.core_directory+"nemesis.ref")
         self.core = cores.load_core(self.core_directory)
@@ -123,19 +126,10 @@ class NemesisResult:
             fig, ax = plt.subplots(1, 1)
         else:
             fig = ax.get_figure()
-        ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.measured, c="k", lw=0.5, label="Retrieved")
-        ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.model, c="r", lw=0.5, label="Prior")
+        ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.measured, c="k", lw=0.5, label="Measured")
+        ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.model, c="r", lw=0.5, label="Model")
         ax.set_yscale("log")
         ax.set_xlabel("Wavelength (μm)")
         ax.set_ylabel("Radiance (μW cm$^{-2}$ sr$^{-1}$ μm$^{-1}$)")
         ax.legend()
         return fig, ax
-
-
-if __name__ == "__main__":
-    res = NemesisResult("cores/core_1/")
-    fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
-    res.plot_spectrum(ax=ax1)
-    res.plot_temperature(ax=ax2)
-    plt.tight_layout()
-    fig.savefig("nosync/temp.png", dpi=500)

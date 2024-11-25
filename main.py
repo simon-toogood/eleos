@@ -33,5 +33,6 @@ for n in range(1, 5):
                              fmerror_factor=n)
     core_list.append(core)
 
-cores.generate_alice_job(cores=core_list, username="scat2")
 
+cores.generate_alice_job(cores=core_list, username="scat2")
+cores.run_alice_job("cores/")

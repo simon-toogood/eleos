@@ -4,6 +4,7 @@ import pandas as pd
 import pkgutil
 import functools
 import pickle
+import time
 
 from jwstools import spx
 
@@ -22,7 +23,7 @@ import constants
 #     * nemesis.set (scattering angles, layer info)
 #     * nemesis.apr (a priori file containing vars to retrieve)
 #     * nemesis.spx (spectrum)
-#       nemesis.inp (input flags)
+#     * nemesis.inp (input flags)
 #    ** .abo, .nam
 #   
 
@@ -48,7 +49,7 @@ class NemesisCore:
                  aerosol_variance=0.1, 
                  aerosol_refactive_index=1.3+1e-3j
                  ):
-        """Creare a NEMESIS core directory with a given set of profiles to retrieve
+        """Create a NEMESIS core directory with a given set of profiles to retrieve
         
         Args:
             parent_directory: The directory in which to create the core folder 
@@ -444,3 +445,7 @@ def generate_alice_job(cores, username, memory=16, hours=24):
         file.write(out)
 
 
+def run_alice_job(parent_directory, print_queue_delay=5):
+    os.system(f"sbatch {parent_directory}submitjob.sh")
+    time.sleep(print_queue_delay)
+    os.system("squeue --me")
