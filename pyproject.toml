@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=61.0", "pandas", "matplotlib"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "nemesis_eleos"
+version = "0.0.1"
+authors = [
+  { name="Simon Toogood", email="scat2@leicester.ac.uk" },
+]
+description = "A Python interface to the NEMESIS spectral inversion tool"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/simon_toogood/eleos"
