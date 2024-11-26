@@ -1,2 +1,2 @@
-graft nemesis_eleos/data
-prune nemesis_eleos/nosync
+graft eleos/data
+prune eleos/nosync
