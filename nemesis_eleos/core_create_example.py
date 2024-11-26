@@ -1,6 +1,4 @@
-import cores
-import profiles
-import shapes
+from nemesis_eleos import shapes, profiles, cores
 
 
 nh3_shape = shapes.Shape1(knee_pressure=0.1, 

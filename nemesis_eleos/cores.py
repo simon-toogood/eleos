@@ -4,8 +4,8 @@ import pandas as pd
 import pickle
 import time
 
-import constants
-import spx
+from . import constants
+from . import spx
 
 
 # Files:

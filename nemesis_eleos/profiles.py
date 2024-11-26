@@ -1,6 +1,6 @@
-import constants
-import shapes
-import utils
+from . import constants
+from . import shapes
+from . import utils
 
 
 class Profile:

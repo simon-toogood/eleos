@@ -3,10 +3,9 @@ import itertools as it
 import pandas as pd
 import matplotlib.pyplot as plt
 
-import profiles
-import utils
-import shapes
-import cores
+from . import profiles
+from . import utils
+from . import cores
 
 
 class NemesisResult:
