@@ -30,5 +30,3 @@ nemesis_eleos/data/statics/nemesis.inp
 nemesis_eleos/data/statics/nemesis.nam
 nemesis_eleos/data/statics/template.job
 nemesis_eleos/data/statics/template.set
-nemesis_eleos/nosync/plot_multimre_v2.py
-nemesis_eleos/nosync/preNemesis_v3.py

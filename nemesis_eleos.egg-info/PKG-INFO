@@ -1,6 +1,6 @@
 Metadata-Version: 2.1
 Name: nemesis_eleos
-Version: 0.5.3
+Version: 0.5.4
 Summary: A Python interface to the NEMESIS spectral inversion tool
 Author-email: Simon Toogood <scat2@leicester.ac.uk>
 License: MIT License

@@ -4,9 +4,9 @@ import pandas as pd
 import pickle
 import time
 
-from jwstools import spx
-
 import constants
+import spx
+
 
 # Files:
 #   Thermal:
@@ -264,7 +264,8 @@ class NemesisCore:
             nemesis.kls
             
         TODO:
-            Add way to include/exclude different elements"""
+            Add way to include/exclude different elements
+            Add option to use ktables on ALICE rather than prepackaged"""
         if self.instrument == "NIRSPEC":
             shutil.copy(constants.PATH+"data/jupiter/nirspec.kls", self.directory+"nemesis.kls")
         elif self.instrument == "MIRI":
