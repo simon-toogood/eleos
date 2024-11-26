@@ -21,7 +21,7 @@ jobs:
         --user
     - name: Bump version
       run: >-
-        python3 -m version_bump.py
+        python3 version_bump.py
     - name: Build a binary wheel and a source tarball
       run: python3 -m build
     - name: Store the distribution packages
