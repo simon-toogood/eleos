@@ -1,1 +1,1 @@
-recursive-include nemesis_eleos/data *
+graft nemesis_eleos/data

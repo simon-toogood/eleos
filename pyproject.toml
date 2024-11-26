@@ -20,3 +20,7 @@ classifiers = [
 
 [project.urls]
 Homepage = "https://github.com/simon-toogood/eleos"
+
+[tools.setuptools]
+include-package-data = true
+
