@@ -2,5 +2,5 @@ nemesis_eleos/no_sync
 .github
 dist
 build
-nemesis_eleos.egg_info
+nemesis_eleos.egg-info
 docs/build
