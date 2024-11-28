@@ -1,10 +1,26 @@
-eleos documentation
-===================
+eleos
+*****
 
-I am going to cry
+A Python interface to the NEMESIS spectral inversion tool.
 
-.. autosummary::
-   :toctree: _autosummary
-   :recursive:
+Features
+========
 
-   eleos
+Create NEMESIS core directories 
+
+View the results of NEMESIS retrievals
+
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Examples
+
+   core_gen_example
+   result_parse_example
+
+
+.. toctree::
+   :maxdepth: 2
+   :caption: API Reference
+
+   documentation

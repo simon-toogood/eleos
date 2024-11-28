@@ -3,3 +3,4 @@ nemesis_eleos/no_sync
 dist
 build
 nemesis_eleos.egg_info
+docs/build

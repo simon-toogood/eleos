@@ -21,15 +21,18 @@ sys.path.insert(0, os.path.abspath('../..'))
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
-    'sphinx.ext.autodoc',	        # To generate autodocs
+#    'sphinx.ext.autodoc',	        # To generate autodocs
     'sphinx.ext.mathjax',           # autodoc with maths
     'sphinx.ext.napoleon',          # For auto-doc configuration
     'sphinx.ext.coverage',
     'sphinx.ext.autosummary',
-    "sphinx_rtd_theme"  
+    "sphinx_rtd_theme",
+    "sphinx_automodapi.automodapi"  
 ]
+numpydoc_show_class_members = False
+autodoc_inherit_docstrings = False
 
-autosummary_generate = True  # Turn on sphinx.ext.autosummary
+#autosummary_generate = True  # Turn on sphinx.ext.autosummary
 
 templates_path = ['_templates']
 exclude_patterns = []
