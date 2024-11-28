@@ -33,5 +33,5 @@ sphinx:
 python:
   install:
     - method: pip
-      path: eleos
+      path: .
     - requirements: docs/requirements.txt
