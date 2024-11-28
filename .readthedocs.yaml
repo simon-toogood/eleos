@@ -34,4 +34,4 @@ python:
   install:
     - method: pip
       path: eleos
-  requirements_file: docs/requirements.txt
+    - requirements_file: docs/requirements.txt
