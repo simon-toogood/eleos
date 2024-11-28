@@ -8,6 +8,7 @@
 
 import sys
 import os
+import sphinx_rtd_theme
 
 project = 'eleos'
 copyright = '2024, Simon Toogood'
@@ -24,7 +25,8 @@ extensions = [
     'sphinx.ext.mathjax',           # autodoc with maths
     'sphinx.ext.napoleon',          # For auto-doc configuration
     'sphinx.ext.coverage',
-    'sphinx.ext.autosummary',  # Create neat summary tables
+    'sphinx.ext.autosummary',
+    "sphinx_rtd_theme"  # Create neat summary tables
 ]
 
 autosummary_generate = True  # Turn on sphinx.ext.autosummary
@@ -42,6 +44,6 @@ autoclass_content = 'both'
 # -- Options for HTML output -------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#options-for-html-output
 
-html_theme = 'alabaster'
+html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
 
