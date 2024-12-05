@@ -1,6 +1,10 @@
 # Eleos - A Python interface to NEMESIS
 
-Please note, this is a WIP project and features may be added/removed at any time. Full documentation will be added in due course.
+Please note, this is a WIP project and features may be added/removed at any time. It is not guarunteed to be backward compatible (and likely will not be until the first stable release 1.0)
+
+## Documentation
+
+Documentation can be found on ReadTheDocs [here](https://eleos.readthedocs.io/en/latest/). This is still WIP, full documentation will be added in due course.
 
 ## Installation
 
@@ -37,7 +41,7 @@ where `parent_directory/` contains a set of cores for a retrieval, `core_N/` is 
 
 ## Core Generation Example (generate.py)
 
-This code generates 4 cores, each with a different forward modelling error factor. Scattering is off by default, so these consider only thermla emission from the planet. It retrieves the temeprature profile using a prior from a pre-loaded file (`tempapr.dat`), the ammonia profile represented as a knee pressure (model 1 in NEMESIS), and an aerosol layer represented as model 32. It then generates a submission script to run NEMESIS using those cores on ALICE. 
+This code generates 4 cores, each with a different forward modelling error factor. Scattering is off by default, so these consider only thermla emission from the planet. It retrieves the temeprature profile using a prior from a pre-loaded file (`tempapr.dat`), the ammonia profile represented as a knee pressure (model 1 in NEMESIS), and an aerosol layer represented as model 32. It then generates a submission script to run NEMESIS using those cores on ALICE.
 
 ```python
 
