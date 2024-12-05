@@ -147,6 +147,7 @@ class NemesisCore:
         shutil.copy(constants.PATH + "data/statics/nemesis.cia", self.directory)
         shutil.copy(constants.PATH + "data/statics/nemesis.abo", self.directory)
         shutil.copy(constants.PATH + "data/statics/nemesis.nam", self.directory)
+        shutil.copy(constants.PATH + "data/statics/nemesis.sol", self.directory)
         shutil.copy(constants.PATH + f"data/{self.planet}/parah2.ref" , self.directory)
 
     def _generate_inp_file(self):
@@ -363,7 +364,7 @@ class NemesisCore:
             file.write(f"{len(self.ref)}    {self.num_aerosol_modes}\n")
             for height in self.ref.height:
                 # This will break with more than 1 aerosol mode!
-                file.write(f"      {height:> 9.4f}      {self.cloud_cover:.4f}      1.00000\n")
+                file.write(f"      {height:> 9.4f}      {int(self.cloud_cover)}      1\n")
 
     def generate_core(self):
         self._copy_input_files()

@@ -24,7 +24,7 @@ class SpxFileData(NamedTuple):
     geometries: tuple[SpxGeometry, ...]
 
 
-def read(path: str | Path) -> SpxFileData:
+def read(path: str) -> SpxFileData:
     """
     Read in a .spx file from disk.
 

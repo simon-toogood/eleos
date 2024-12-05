@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "nemesis_eleos"
-version = "0.6.1"
+version = "0.6.2"
 authors = [
   { name="Simon Toogood", email="scat2@leicester.ac.uk" },
 ]
 description = "A Python interface to the NEMESIS spectral inversion tool"
 readme = "README.md"
 license = {file = "LICENSE"}
-requires-python = ">= 3.10"
+requires-python = ">= 3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",

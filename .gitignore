@@ -5,3 +5,5 @@ build
 nemesis_eleos.egg-info
 docs/build
 eleos/__pycache__
+.venv
+eleos.code-workspace
