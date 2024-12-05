@@ -1,9 +1,11 @@
-from dataclasses import dataclass
-from typing import ClassVar
-import shutil
+""" 
+Each Shape object represents a differnet model in NEMESIS. Eg. ``Shape1`` represents profile shape 1 which is a constant VMR 
+up to a knee pressure then a fractional scale height. For a ful list of possible models see the NEMESIS manual. Please note: 
+due to the large number of profile shapes NEMESIS supports, 
 
+Adding a Shape subclass
+=======================
 
-""" HOW TO ADD A SHAPE: 
 All subclasses of Shape must implement:
     - ID: Integer ID of the shape in NEMESIS
     - NAMES: The names of the parameters in order they appear in the mre file (do not include error parameters here)
@@ -18,25 +20,35 @@ override the copy_required_files method.
 
 Finally, add the new ShapeN class to the ALL_SHAPES list at the end of the file.
 
-Class template:
+Class template::
 
-@shapeclass
-class ShapeN(Shape):
-    "copy the desciption from the NEMESIS manual here (use triple quotes!)"
-    ID: ClassVar[int] = N
-    NAMES:  ClassVar[list[str]] = ["arg_name_1", "arg_name_2", ...]
-    arg_name_1: type_1
-    arg_name_2: type_2
-    arg_name_2_error: type_2
-    ...
+    @shapeclass
+    class ShapeN(Shape):
+        "copy the desciption from the NEMESIS manual here (use triple quotes!)"
+        ID: ClassVar[int] = N
+        NAMES:  ClassVar[list[str]] = ["arg_name_1", "arg_name_2", ...]
+        arg_name_1: type_1
+        arg_name_2: type_2
+        arg_name_2_error: type_2
+        ...
 
-    def generate_apr_data(self):
-        return a string for apr file
+        def generate_apr_data(self):
+            return a string for apr file
+
+        # optionally
+        def copy_required_files(self, directory):
+            shutil.copy(..., directory)
 
 """
 
+from dataclasses import dataclass
+from typing import ClassVar
+import shutil
+
+
 
 def shapeclass(*args, **kwargs):
+    """Syntatic sugar for ``@dataclass(repr=False)``"""
     return dataclass(*args, **kwargs, repr=False)
     
 
@@ -51,6 +63,16 @@ class Shape:
         for name, value in self.__dict__.items():
             out += f"\n    {name}: {value}"    
         return out
+    
+    def generate_apr_data(self):
+        """Generate the section of the .apr file that stores the shape parameters
+        
+        Args:
+            None
+            
+        Returns:
+            str: The string to write to the .apr file"""
+        pass
 
     def copy_required_files(self, directory):
         """Some Shapes require additional files to be copied into the core directory"""
@@ -117,17 +139,11 @@ NEMESIS to actually find an optimal value of the knee pressure."""
         
 
 def get_shape_from_id(id_):
+    """Given a shape ID integer, return a reference to the class corresponding to that ID. Note that this returns a class, not an instantiated object."""
     id_ = int(id_)
     for shape_class in ALL_SHAPES:
         if shape_class.ID == id_:
             return shape_class
 
 
-
-
-ALL_SHAPES = [Shape0, Shape1, Shape32]
-
-
-if __name__ == "__main__":
-    x = Shape1(1,2,3,4,5)
-    print(x)
+ALL_SHAPES = [Shape0, Shape1, Shape32] #: A list of all the Shape classes

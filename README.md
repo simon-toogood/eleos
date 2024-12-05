@@ -13,16 +13,31 @@ And on Windows:
 `py -m pip install nemesis_eleos`
 
 
-Eleos only creates file for, and reads files created by, NEMESIS. Therefore, it is not mandatory to have NEMESIS installed for this package to work. 
+Eleos only creates file for, and reads files created by, NEMESIS. Therefore, it is not mandatory to have NEMESIS installed for this package to work. In order to use the cores however, it is necessary. See the NEMESIS GitHub page for full instructions on [how to download the software](https://github.com/nemesiscode/radtrancode/blob/master/README.md) and [how to compile it](https://github.com/nemesiscode/radtrancode/blob/master/AACOMPILE.txt).
 
 
-This library was built with the intention of running on the University of Leicester’s HPC system ALICE3. Therefore, functions like `cores.generate_alice_job()` and `cores.run_alice_job` are only 
+This library was built with the intention of running on the University of Leicester’s HPC system ALICE3. Therefore, functions like `cores.generate_alice_job` and `cores.run_alice_job` are only
 
-guaranteed to work on ALICE3, which uses the SLURM job scheduler. Other HPC facilities withh require their own template submission files in `data/statics` and functions in `cores`.
+guaranteed to work on ALICE3, which uses the SLURM job scheduler. Other HPC facilities will require their own template submission files in `data/statics` and functions in `cores`.
 
-## Core Generation Example
+## Working Directory Structure
 
-This code generates 4 cores, each with a different forward modelling error factor. It retrieves the temeprature profile using a prior from a file (`tempapr.dat`), the ammonia profile represented as a knee pressure (model 1 in NEMESIS), and an aerosol layer represented as model 32. It then generates a submission script to run NEMESIS using those cores on ALICE.
+This library will function best with the following structure in your working directory:
+
+```
+parent_directory
+|-- core_1
+|-- core_2
+|   ...
+generate.py
+analyse.py
+```
+
+where `parent_directory/` contains a set of cores for a retrieval, `core_N/` is the core folder that NEMESIS is run from, `generate.py` is the code that generates these cores using `eleos.cores`, and `analyse.py` is the code that analyses the results using `eleos.results` .
+
+## Core Generation Example (generate.py)
+
+This code generates 4 cores, each with a different forward modelling error factor. Scattering is off by default, so these consider only thermla emission from the planet. It retrieves the temeprature profile using a prior from a pre-loaded file (`tempapr.dat`), the ammonia profile represented as a knee pressure (model 1 in NEMESIS), and an aerosol layer represented as model 32. It then generates a submission script to run NEMESIS using those cores on ALICE. 
 
 ```python
 
@@ -63,9 +78,9 @@ for n in range(1, 5):
 cores.generate_alice_job(cores=core_list, username="scat2")
 ```
 
-## Result Analysis Example
+## Result Analysis Example (analyse.py)
 
-This code takes the result of running NEMESIS on the output of the above example and plots the retrieved spectrum and temperature profile, then saves it to a file.
+This code takes the result of running NEMESIS on the output of the above example and plots the retrieved spectrum and temperature profile for the first of the cores, then saves it to a file.
 
 ```python
 import matplotlib.pyplot as plt
@@ -86,4 +101,6 @@ plt.tight_layout()
 fig.savefig("nosync/temp.png", dpi=500)
 ```
 
+## Limitations and future work
 
+Currently, this library only supports Jupiter (although expansion should be fairly easy when providing .ref files) and a single aerosol mode. In the future, these restrictions will be lifted once the basics of the library have been debugged and tested for both forward and retrieval modes.

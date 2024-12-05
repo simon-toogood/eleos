@@ -3,6 +3,7 @@ import shutil
 import pandas as pd
 import pickle
 import time
+import warnings
 
 from . import constants
 from . import spx
@@ -45,8 +46,8 @@ class NemesisCore:
                  fmerror_factor=3,
                  aerosol_radius=1, 
                  aerosol_variance=0.1, 
-                 aerosol_refactive_index=1.3+1e-3j
-                 ):
+                 aerosol_refactive_index=1.3+1e-3j,
+                 cloud_cover=1.0):
         """Create a NEMESIS core directory with a given set of profiles to retrieve
         
         Args:
@@ -63,6 +64,7 @@ class NemesisCore:
             num_aerosol_modes: The number of aerosol modes to use
             instrument: Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use
             fmerror_factor: The factor by which to multiply the error on the spectrum
+            cloud_cover: If scattering, then this is the fractional cloud cover between 0 and 1 (should not usually be changed)
         """
         # Increment the global core counter
         NemesisCore.core_id += 1
@@ -74,7 +76,7 @@ class NemesisCore:
         # Set ref file if not specified:
         if ref_file is None:
             self.ref_file = constants.PATH + f"data/{planet}/{planet}.ref"
-            raise Warning(f"No ref file specified. Using the default in {self.ref_file}")
+            warnings.warn(f"No ref file specified. Using the default in {self.ref_file}")
         else:
             self.ref_file = ref_file
 
@@ -93,6 +95,7 @@ class NemesisCore:
         self.aerosol_radius = aerosol_radius
         self.aerosol_variance = aerosol_variance
         self.aerosol_refactive_index = aerosol_refactive_index
+        self.cloud_cover = cloud_cover
 
         # If in forward mode, set the number of iterations to 0
         if self.forward:
@@ -101,9 +104,11 @@ class NemesisCore:
         # Parse the ref file:
         self.ref = parse_ref_file(self.ref_file)
 
-        # Raise a warning if not being used at Jupiter
+        # Raise an error if trying to use features not implemented yet
         if planet != "jupiter":
-            raise Warning("Eleos does not fully support planets other than Jupiter yet!")
+            raise Exception("Eleos does not fully support planets other than Jupiter yet!")
+        if num_aerosol_modes > 1:
+            raise Exception("Eleos does not support multiple aerosol modes yet!")
         
         # Create the directory tree if it doesn't already exist and clear it if it does
         os.makedirs(self.parent_directory, exist_ok=True)
@@ -120,7 +125,7 @@ class NemesisCore:
 
     def _save_core(self):
         with open(self.directory+"core.pkl", mode="wb") as file:
-            pickle.dump(file)
+            pickle.dump(self, file)
 
     def _copy_input_files(self):
         """Copy the given .spx and .ref file into the core
@@ -175,6 +180,7 @@ class NemesisCore:
             nemesis.apr"""
         out = f"*******Apriori File*******\n           {len(self.profiles)}\n"
         for profile in self.profiles:
+            print(profile)
             profile.shape.copy_required_files(self.directory)
             out += profile.generate_apr_data() + "\n"
         with open(self.directory + "nemesis.apr", mode="w") as file:
@@ -342,6 +348,23 @@ class NemesisCore:
         os.system("Normxsc < tmp/normxsc.inp")
         os.chdir(cwd)
 
+    def _generate_fcloud_ref(self):
+        """Generate the fcloud.ref file
+        
+        Args:
+            None
+            
+        Returns:
+            None
+            
+        Creates:
+            fcloud.ref"""
+        with open(self.directory+"fcloud.ref", mode="w+") as file:
+            file.write(f"{len(self.ref)}    {self.num_aerosol_modes}\n")
+            for height in self.ref.height:
+                # This will break with more than 1 aerosol mode!
+                file.write(f"      {height:> 9.4f}      {self.cloud_cover:.4f}      1.00000\n")
+
     def generate_core(self):
         self._copy_input_files()
         self._copy_template_files()
@@ -355,30 +378,7 @@ class NemesisCore:
         self._generate_xsc()
         self._save_core()
         if self.scattering:
-            pass
-
-    def generate_cloudf(self, wavelengths, imag_refractive_index, imag_refractive_index_err):
-        """Generate the cloudf1.dat file. I dont really know what this does or why it exists but thats a problem for later.
-        Contains some header info (???) and then 3 columns:
-        wavelength, imag refractive index and the error on it.
-           
-        Args:
-            wavelengths: List of wavelengths 
-            imag_refractive_index: The imaginary part of refractive index for the clouds
-            imag_refractive_index_err: The estimated uncertainty on the imaginary refractive index
-
-        Returns:
-            None
-
-        Creates:
-            fcloud1.dat
-        """
-        
-        header = f"    0.01    0.1\n    0.01    0.001\n{len(wavelengths)}   -1    !NWAVE,CLEN\n2.73  1.55\n2.73        !V_OD_NORM"
-        with open("fcloud1.dat", mode="w+") as file:
-            file.write(header + "\n")
-            for wl in wavelengths:
-                file.write(f"{wl} {imag_refractive_index} {imag_refractive_index_err}\n")
+            self._generate_fcloud_ref()
 
 
 def parse_ref_file(ref_file):
@@ -401,11 +401,25 @@ def parse_ref_file(ref_file):
 
 
 def load_core(core_directory):
-    return pickle.load(core_directory+"core.pkl")
+    """Load a NemesisCore object saved using NemesisCore._save_core
+    
+    Args:
+        None
+        
+    Returns:
+        NemesisCore: The unpickled core"""
+    with open(core_directory+"core.pkl", 'rb') as f:
+        return pickle.load(f)
 
 
 def reset_core_numbering():
-    """Reset the automatic core numbering. Useful for creating multiple sets of cores in one program"""
+    """Reset the automatic core numbering. Useful for creating multiple sets of cores in one program.
+    
+    Args:
+        None
+        
+    Returns:
+        None"""
     NemesisCore.core_id = 0
 
 
@@ -444,7 +458,16 @@ def generate_alice_job(cores, username, memory=16, hours=24):
         file.write(out)
 
 
-def run_alice_job(parent_directory, print_queue_delay=5):
+def run_alice_job(parent_directory, print_queue_delay=2):
+    """Run the script created by generate_alice_job
+    
+    Args:
+        parent_directory (str): Path to the directory containing all the cores
+        print_queue_delay (float): Duration to wait (in seconds) before printing the current job queue
+
+    Returns:
+        None
+    """
     os.system(f"sbatch {parent_directory}submitjob.sh")
     time.sleep(print_queue_delay)
     os.system("squeue --me")

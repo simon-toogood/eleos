@@ -2,6 +2,7 @@ import io
 import itertools as it
 import pandas as pd
 import matplotlib.pyplot as plt
+import glob
 
 from . import profiles
 from . import utils
@@ -9,34 +10,51 @@ from . import cores
 
 
 class NemesisResult:
+    """Class for storing the results of a NEMESIS retrieval.
+    
+    Attributes:
+        core_directory (str): The directory of the core being analysed
+        ref (pandas.DataFrame): A DataFrame containing the data in the .ref file
+        core (eleos.cores.NemesisCore): The NemesisCore object that generated the core directory
+        profiles (list[eleos.porfiles.Profile]): A list of all the retrieved Profile objects from the run
+        num_retrievals (int): I don't know what this param is - first field in the .mre file
+        latitude (float): Latitude of the observed spectrum
+        longitude (float): Longitude of the observed spectrum
+        # Read in the fitted spectrum as a DataFrame
+        self.fitted_spectrum = pd.read_table(mre_file, 
+                                             names=["wavelength", "measured", "error", "pct_error", "model", "pct_diff"],
+                                             index_col=0, sep="\s+", skiprows=5, nrows=blocks[0]-7)
+"""
     def __init__(self, core_directory):
-        """Class for storing the results of a NEMESIS retrieval.
+        """Inititalise a NemesisResult class
         
-        Attributes:
-            core_directory: """
+        Args:
+            core_directory: The directory of a single core"""
         self.core_directory = core_directory
         self.ref = cores.parse_ref_file(self.core_directory+"nemesis.ref")
         self.core = cores.load_core(self.core_directory)
-        self.read_apr()
-        self.read_mre()
+        self._read_apr()
+        self._read_mre()
 
-    def _parse_header_line(self, line, num_fields, cast_to):
+    def _parse_header_line(self, line, num_fields=-1, cast_to=float):
         """Take in a header line from the .mre file and split each token and cast to a dtype.
-        Eg. "10     2     4     7.2" -> [10.0, 2.0, 4.0, 7.2]"""
+        Eg. "10     2     4     7.2" -> [10.0, 2.0, 4.0, 7.2]
+        
+        Args:
+            line (str): The line to tokenise
+            num_fields: The number of fields to include, starting from the left-hand side. Default is to include all fields
+            cast_to: The type to cast the fields to.
+        
+        Returns:
+            list[cast_to]: List of fields"""
         fields = [cast_to(x) for x in line.split()[:num_fields]]
         if num_fields == 1:
             return fields[0]
         else:
             return fields
         
-    def read_apr(self):
-        """Read in the nemesis.apr and create a list of Profile objects as an object attribute
-        
-        Args:
-            None
-            
-        Returns:
-            None"""
+    def _read_apr(self):
+        """Read in the nemesis.apr and create a list of Profile objects as an object attribute"""
         with open(self.core_directory+"nemesis.apr", mode="r") as file:
             blocks = []
             # First read of file: get line numbers of block starts
@@ -56,7 +74,7 @@ class NemesisResult:
                 profile = profiles.create_profile_from_apr(data)
                 self.profiles.append(profile)
                     
-    def read_mre(self):
+    def _read_mre(self):
         """Read in the nemesis.mre file"""
         mre_file = self.core_directory + "nemesis.mre"
         with open(mre_file) as file:
@@ -92,6 +110,14 @@ class NemesisResult:
                 profile.add_result(df)
 
     def plot_temperature(self, ax=None):
+        """Plot the prior and retrieved temperature profile on a matplotlib Axes.
+        
+        Args:
+            ax: The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes
+            
+        Returns:
+            matplotlib.Figure: The Figure object to which the Axes belong
+            matplotlib.Axes: The Axes object onto which the data was plotted"""
         # Find retrieved temperature profile
         for p in self.profiles:
             if isinstance(p, profiles.TemperatureProfile):
@@ -112,15 +138,14 @@ class NemesisResult:
         return fig, ax
 
     def plot_spectrum(self, ax=None):
-        """Plot the fitted spectrum using matplotlib
+        """Plot the measured and model spectrum on a matplotlib Axes.
         
         Args:
-            ax: The matplotlib Axes to plot onto. If None then create a new Figure and Axes
+            ax: The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes
             
         Returns:
-            fig: The created matplotlib.Figure object
-            ax: The created matplotlib.Axes object
-        """
+            matplotlib.Figure: The Figure object to which the Axes belong
+            matplotlib.Axes: The Axes object onto which the data was plotted"""
         if ax is None:
             fig, ax = plt.subplots(1, 1)
         else:
@@ -132,3 +157,18 @@ class NemesisResult:
         ax.set_ylabel("Radiance (μW cm$^{-2}$ sr$^{-1}$ μm$^{-1}$)")
         ax.legend()
         return fig, ax
+    
+
+def load_multiple_cores(parent_directory):
+    """Read in all the cores in a given directory and return a list of NemesisResult objects.
+    
+    Args:
+        parent_directory (str): The directory containing all the individual core directories
+        
+    Returns:
+        list[NemesisResult]: A list containing the result object for each core"""
+    
+    out = []
+    for core in sorted(glob.glob(parent_directory+"core_*/")):
+        out.append(NemesisResult(core))
+    return out

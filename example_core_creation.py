@@ -1,4 +1,4 @@
-from nemesis_eleos import shapes, profiles, cores
+from eleos import shapes, profiles, cores
 
 
 nh3_shape = shapes.Shape1(knee_pressure=0.1, 
@@ -26,7 +26,6 @@ core_list = []
 for n in range(1, 5):
     core = cores.NemesisCore(parent_directory=f"cores/",
                              spx_file="/home/s/scat2/JWST/2022_JupSouthPole/zonal_spectra/sparse_55.0degS.spx",
-                             ref_file="data/jupiter/jupiter.ref",
                              profiles=[temp_profile, nh3_profile, aero_profile],
                              fmerror_factor=n)
     core_list.append(core)

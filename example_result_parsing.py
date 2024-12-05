@@ -1,6 +1,6 @@
 import matplotlib.pyplot as plt
 
-from nemesis_eleos import results
+from eleos import results
 
 
 res = results.NemesisResult("cores/core_1/")

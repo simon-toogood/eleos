@@ -1,6 +1,7 @@
-nemesis_eleos/no_sync
+eleos/no_sync
 .github
 dist
 build
 nemesis_eleos.egg-info
 docs/build
+eleos/__pycache__

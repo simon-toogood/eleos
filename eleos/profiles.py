@@ -1,3 +1,5 @@
+"""This module contains the classes for creating Profile objects."""
+
 from . import constants
 from . import shapes
 from . import utils
@@ -5,14 +7,17 @@ from . import utils
 
 class Profile:
     def __init__(self):
-        """Do not instantiate directly, use a subclass"""
+        """This is the base class for all Profile objects. It should never be instantiated directly, use a subclass such as ``GasProfile`` or ``TemperatureProfile``"""
         self.retrieved = False
 
     def add_result(self, df):
         """Take in a DataFrame created by reading in the .mre file (results.NemesisResult.read_mre) and assign the correct attributes
         
         Args:
-            df: pandas.DataFrame with columns "prior", "prior_error", "retrieved", "retrieved_error" and a row for each parameter"""
+            df: pandas.DataFrame with columns "prior", "prior_error", "retrieved", "retrieved_error" and a row for each parameter
+            
+        Returns:
+            None"""
         
         # Get order of parameters
         names = self.shape.NAMES
@@ -49,12 +54,26 @@ class TemperatureProfile(Profile):
         return f"<TemperatureProfile [{self.create_nemesis_string()}]>"
 
     def __str__(self):
-        return f"TemperatureProfile:\n    File: {self.filepath}\n    Retrieved: {self.retrieved}\n" + utils.indent(str(self.shape))
+        return f"TemperatureProfile:\n    File: {self.shape.filepath}\n    Retrieved: {self.retrieved}\n" + utils.indent(str(self.shape))
 
     def create_nemesis_string(self):
+        """Create the NEMESIS code that represents the temperature profile. Temperature profiles currently only support mode 0 0 0 so this function's return value is always constant
+        
+        Args:
+            None
+            
+        Returns:
+            str: '0 0 0'"""
         return f"0 0 0"
     
     def generate_apr_data(self):
+        """Generate the section of the .apr file for this temperature profile
+        
+        Args:
+            None
+            
+        Returns:
+            str: The string to write to the .apr file"""
         return "0 0 0 - Temp\n" + self.shape.generate_apr_data()
 
 
@@ -82,16 +101,30 @@ class GasProfile(Profile):
             self.gas_id = constants.GASES.loc[constants.GASES.name == gas_name].radtrans_id.iloc[0]
 
     def __repr__(self):
-        return f"<GasProfile {self.gas_name} [{self.create_nemesis_string()}]>"
+        return f"<GasProfile {self.gas_name} [{self.create_nemesis_code()}]>"
 
     def __str__(self):
         return f"GasProfile:\n    Species: {self.gas_name}\n    Isotope: {self.isotope_id}\n" + utils.indent(str(self.shape))
 
-    def create_nemesis_string(self):
+    def create_nemesis_code(self):
+        """Create the NEMESIS code that represents the gas profile (eg. 23 0 1)
+        
+        Args:
+            None
+            
+        Returns:
+            str: The NEMESIS code"""
         return f"{self.gas_id} {self.isotope_id} {self.shape.ID}"
     
-    def generate_apr_data(self, *args):
-        return self.create_nemesis_string() + " - " + self.gas_name + "\n" + self.shape.generate_apr_data()
+    def generate_apr_data(self):
+        """Generate the section of the .apr file for this gas profile
+        
+        Args:
+            None
+            
+        Returns:
+            str: The string to write to the .apr file"""
+        return self.create_nemesis_code() + " - " + self.gas_name + "\n" + self.shape.generate_apr_data()
 
 
 class AerosolProfile(Profile):
@@ -106,19 +139,42 @@ class AerosolProfile(Profile):
         self.shape = shape
 
     def __repr__(self):
-        return f"<AerosolProfile {self.aerosol_id} [{self.create_nemesis_string()}]>"
+        return f"<AerosolProfile {self.aerosol_id} [{self.create_nemesis_code()}]>"
 
     def __str__(self):
         return f"AerosolProfile:\n    ID: {self.aerosol_id}\n    Retrieved: {self.retrieved}\n" + utils.indent(str(self.shape))
 
-    def create_nemesis_string(self):
+    def create_nemesis_code(self):
+        """Create the NEMESIS code that represents the aerosol profile (eg. -1 0 32)
+        
+        Args:
+            None
+            
+        Returns:
+            str: The NEMESIS code"""
         return f"-{self.aerosol_id} 0 {self.shape.ID}"
     
     def generate_apr_data(self):
-        return self.create_nemesis_string() + f" - CP{self.aerosol_id}\n" + self.shape.generate_apr_data()
+        """Generate the section of the .apr file for this aerosol profile
+        
+        Args:
+            None
+            
+        Returns:
+            str: The string to write to the .apr file"""
+        return self.create_nemesis_code() + f" - CP{self.aerosol_id}\n" + self.shape.generate_apr_data()
 
 
 def create_profile_from_code(code):
+    """Create a Profile object from a NEMESIS code (eg. '23 0 1'). The Profile.shape attribute will be a refernce to a Shape subclass, 
+    NOT an instantiated Shape[N] object as there is no a priori data. To create a fully instantiated Profile and Shape, see ``profiles.create_profile_from_apr``
+
+    Args:
+        code (str): The NEMESIS code in string form seperated by whitespace (eg. '23 0 1')
+
+    Returns:
+        Profile: The instantiated Profile object
+    """
     tokens = [int(x) for x in code.split()]
 
     # Special case for temp profile
@@ -141,10 +197,10 @@ def create_profile_from_apr(string):
     """Creates a Profile object based on the .apr string representation
     
     Args:
-        string: The section of the .apr file that contains the parameters
+        string (str): The section of the .apr file that contains the parameters
         
     Returns:
-        Profile: A Profile-subclassed object"""
+        Profile: A fully instantiated Profile object"""
     lines = string.split("\n")
     code = lines[0].split(" - ")[0]
     profile = create_profile_from_code(code)
