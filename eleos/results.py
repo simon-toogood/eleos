@@ -34,7 +34,7 @@ class NemesisResult:
         self.core_directory = core_directory
         self.ref = cores.parse_ref_file(self.core_directory+"nemesis.ref")
         self.core = cores.load_core(self.core_directory)
-        self._read_apr()
+        self.profiles = self.core.profiles
         self._read_mre()
         self.chi_sq = self.get_chi_sq()
 
@@ -54,27 +54,6 @@ class NemesisResult:
             return fields[0]
         else:
             return fields
-        
-    def _read_apr(self):
-        """Read in the nemesis.apr and create a list of Profile objects as an object attribute"""
-        with open(self.core_directory+"nemesis.apr", mode="r") as file:
-            blocks = []
-            # First read of file: get line numbers of block starts
-            for i, line in enumerate(file):
-                if i == 0:
-                    pass
-                elif i == 1:
-                    num_profiles = int(line)
-                elif " - " in line:
-                    blocks.append(i)
-            blocks.append(i+1)
-
-            # Second read: get each profile from the block
-            self.profiles = []
-            for start, end in it.pairwise(blocks):
-                data = utils.read_between_lines(file, start, end)
-                profile = profiles.create_profile_from_apr(data)
-                self.profiles.append(profile)
                     
     def _read_mre(self):
         """Read in the nemesis.mre file"""

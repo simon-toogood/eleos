@@ -23,20 +23,15 @@ class Profile:
         
         # Get order of parameters
         names = self.shape.NAMES
-        if names == ["None"]:
-            # In this case, it is a temperature retrieval
-            # In the future if I add other profiles that also require a text file then this is going to break spectacularly
-            self.shape.data = df
-        else:
-            assert len(names) == len(df)
-            # Set attributes of the child Shape object
-            for name, (_, row) in zip(names, df.iterrows()):
-                for title, value in zip(row.index, row.values):
-                    if "prior" in title:
-                        attrname = title.replace("prior", name)
-                    elif "retrieved" in title:
-                        attrname = title.replace("retrieved", f"retrieved_{name}")
-                    setattr(self.shape, attrname, value)
+        assert len(names) == len(df)
+        # Set attributes of the child Shape object
+        for name, (_, row) in zip(names, df.iterrows()):
+            for title, value in zip(row.index, row.values):
+                if "prior" in title:
+                    attrname = title.replace("prior", name)
+                elif "retrieved" in title:
+                    attrname = title.replace("retrieved", f"retrieved_{name}")
+                setattr(self.shape, attrname, value)
 
         # Toggle retrieved flag
         self.retrieved = True
@@ -77,6 +72,10 @@ class TemperatureProfile(Profile):
         Returns:
             str: The string to write to the .apr file"""
         return "0 0 0 - Temp\n" + self.shape.generate_apr_data()
+
+    def add_result(self, df):
+        self.shape.data = df
+        self.retrieved = True
 
 
 class GasProfile(Profile):
@@ -168,12 +167,7 @@ class AerosolProfile(Profile):
 
 
 class ImagRefractiveIndexProfile(Profile):
-    def __init__(self, 
-                 aerosol_id, 
-                 aerosol_radius_error, 
-                 aerosol_variance_error,
-                 imag_refractive_index_error,
-                 reference_wavelength):
+    def __init__(self, aerosol_id, shape):
         """Create a profile that retrieves the imaginary part of a clouds refractive index. Will require a corresponding AerosolProfile
         to be defined. This is currently limited to constant refractive index as a function of wavelength.
 
@@ -186,16 +180,14 @@ class ImagRefractiveIndexProfile(Profile):
 
         super().__init__()
         self.aerosol_id = aerosol_id
-        self.aerosol_radius_error = aerosol_radius_error
-        self.aerosol_variance_error = aerosol_variance_error
-        self.imag_refractive_index_error = imag_refractive_index_error
-        self.shape = shapes.Shape444(filepath=f"cloudf{self.aerosol_id}.dat")
+        assert isinstance(shape, shapes.Shape444)
+        self.shape = shape
 
     def __repr__(self):
         return f"<ImagRefractiveIndexProfile [{self.create_nemesis_string()}]>"
 
     def __str__(self):
-        return f"ImagRefractiveIndexProfile:\n    File: {self.shape.filepath}\n    Retrieved: {self.retrieved}\n"
+        return f"ImagRefractiveIndexProfile:\n    ID: {self.aerosol_id}\n    Retrieved: {self.retrieved}\n" + utils.indent(str(self.shape))
 
     def create_nemesis_string(self):
         """Create the NEMESIS code that represents the profile.
@@ -208,87 +200,4 @@ class ImagRefractiveIndexProfile(Profile):
         return f"444 {self.aerosol_id} 444"
     
     def generate_apr_data(self):
-        """Generate the section of the .apr file for this profile and create the extra input file 'cloudfN.dat'
-        
-        Args:
-            None
-            
-        Returns:
-            str: The string to write to the .apr file"""
-        
-        # Get first wavelength
-        wl = spx.read(self.core.spx_file).geometries[0].wavelengths[0]
-        # Get number of wavelengths in xsc file
-        with open(self.core.directory+"nemesis.xsc") as file:
-            lines = file.read().split("\n")
-            nwave = (len(lines)-2) // 2
-            refwave = float(lines[1].split()[0])
-        
-        # Generate cloudfN.dat
-        with open(self.core.directory + f"cloudf{self.aerosol_id}.dat", mode="w+") as file:
-            utils.write_nums(file, self.core.aerosol_radius, self.aerosol_radius_error)
-            utils.write_nums(file, self.core.aerosol_variance, self.aerosol_variance_error)
-            file.write(f"{nwave}    -1\n")
-            utils.write_nums(file, refwave, self.core.aerosol_refractive_index.real)
-            utils.write_nums(file, refwave)
-            for line in lines:
-                vals = line.split()
-                if len(vals) < 2:
-                    continue
-                print(float(vals[0]), repr(self.core.aerosol_refractive_index.imag), repr(self.imag_refractive_index_error))
-                utils.write_nums(file, float(vals[0]), self.core.aerosol_refractive_index.imag, self.imag_refractive_index_error)
-        # Return the string
         return f"{self.create_nemesis_string()} - n{self.aerosol_id}\n{self.shape.generate_apr_data()}"
-
-
-def create_profile_from_code(code):
-    """Create a Profile object from a NEMESIS code (eg. '23 0 1'). The Profile.shape attribute will be a refernce to a Shape subclass, 
-    NOT an instantiated Shape[N] object as there is no a priori data. To create a fully instantiated Profile and Shape, see ``profiles.create_profile_from_apr``
-
-    Args:
-        code (str): The NEMESIS code in string form seperated by whitespace (eg. '23 0 1')
-
-    Returns:
-        Profile: The instantiated Profile object
-    """
-    tokens = [int(x) for x in code.split()]
-
-    # Special case for temp profile
-    if tokens == [0, 0, 0]:
-        return TemperatureProfile(None)
-    
-    # Create the Shape
-    shape = shapes.get_shape_from_id(tokens[2])
-
-    # Create the Profile
-    if tokens[0] == 444:
-        return ImagRefractiveIndexProfile(tokens[1],0,0,0,0)
-    if tokens[0] > 0:
-        return GasProfile(gas_id=tokens[0], isotope_id=tokens[1], shape=shape)
-    elif tokens[0] < 0:
-        return AerosolProfile(aerosol_id=abs(tokens[0]), shape=shape)
-    else:
-        raise NotImplementedError
-    
-
-def create_profile_from_apr(string):
-    """Creates a Profile object based on the .apr string representation
-    
-    Args:
-        string (str): The section of the .apr file that contains the parameters
-        
-    Returns:
-        Profile: A fully instantiated Profile object"""
-    lines = string.split("\n")
-    code = lines[0].split(" - ")[0]
-    profile = create_profile_from_code(code)
-    params = [y for x in lines[1:] for y in x.split()]
-    if isinstance(profile, TemperatureProfile):
-        profile.filepath = params[0]
-        return profile
-    elif isinstance(profile, ImagRefractiveIndexProfile):
-        return profile
-    else:
-        print(params)
-        profile.shape = profile.shape(*params)
-        return profile

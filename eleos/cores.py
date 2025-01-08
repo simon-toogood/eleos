@@ -26,6 +26,10 @@ from . import spx
 #    ** .abo, .nam
 #   
 
+# NOTES:
+# aerosol radius for xsc can now be specified in two places; ImagrefractiveIndexProfile and here.
+#  What happens if theyre differnet? Do i need to add a check for the presence of a 444 and overwrite that?
+
 
 class NemesisCore:
     core_id = 0
@@ -187,7 +191,7 @@ class NemesisCore:
             nemesis.apr"""
         out = f"*******Apriori File*******\n           {len(self.profiles)}\n"
         for profile in self.profiles:
-            profile.shape.copy_required_files(self.directory)
+            profile.shape.create_required_files(self.directory)
             out += profile.generate_apr_data() + "\n"
         with open(self.directory + "nemesis.apr", mode="w") as file:
             file.write(out)

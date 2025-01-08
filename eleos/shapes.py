@@ -16,7 +16,7 @@ All subclasses of Shape must implement:
                          that the .apr file expects.
 
 Additionally, some shapes require additional files in the core (eg. tempapr.dat). If this is the case,
-override the copy_required_files method.
+override the create_required_files method.
 
 Finally, add the new ShapeN class to the ALL_SHAPES list at the end of the file.
 
@@ -36,7 +36,7 @@ Class template::
             return a string for apr file
 
         # optionally
-        def copy_required_files(self, directory):
+        def create_required_files(self, directory):
             shutil.copy(..., directory)
 
 """
@@ -45,6 +45,7 @@ from dataclasses import dataclass
 from typing import ClassVar
 import shutil
 
+from . import spx, utils
 
 
 def shapeclass(*args, **kwargs):
@@ -74,7 +75,7 @@ class Shape:
             str: The string to write to the .apr file"""
         pass
 
-    def copy_required_files(self, directory):
+    def create_required_files(self, directory):
         """Some Shapes require additional files to be copied into the core directory"""
         pass
 
@@ -89,7 +90,7 @@ class Shape0(Shape):
     NAMES: ClassVar[list[str]] = ["None"]
     filepath: str
 
-    def copy_required_files(self, directory):
+    def create_required_files(self, directory):
         shutil.copy(self.filepath, directory)
 
     def generate_apr_data(self):
@@ -192,13 +193,42 @@ values of the imaginary refractive index spectrum and errors. In this model, the
 the real part of the refractive index spectrum is calculated with a Kramers-Kronig
 analysis and then the Mie scattering properties of the particles calculated."""
     ID: ClassVar[int] = 444
-    NAMES: ClassVar[list[str]] = ["None"]
-    filepath: str
+    NAMES: ClassVar[list[str]] = ["radius", "variance", "refractive_index"]
+    aerosol_id: int
+    radius: float
+    radius_error: float
+    variance: float
+    variance_error: float
+    refractive_index: complex
+    refractive_index_error: float
 
     def generate_apr_data(self):
-        return self.filepath.split("/")[-1]
+        return f"cloudf{self.aerosol_id}.dat"
 
+    def create_required_files(self, directory):
+         # Get first wavelength
+        wl = spx.read(directory+"nemesis.spx").geometries[0].wavelengths[0]
 
+        # Get number of wavelengths in xsc file
+        with open(directory+"nemesis.xsc") as file:
+            lines = file.read().split("\n")
+            nwave = (len(lines)-2) // 2
+            refwave = float(lines[1].split()[0])
+        
+        # Generate cloudfN.dat
+        with open(directory + f"cloudf{self.aerosol_id}.dat", mode="w+") as file:
+            utils.write_nums(file, self.radius, self.radius_error)
+            utils.write_nums(file, self.variance, self.variance_error)
+            file.write(f"{nwave}    -1\n")
+            utils.write_nums(file, refwave, self.refractive_index.real)
+            utils.write_nums(file, refwave)
+            for line in lines:
+                vals = line.split()
+                if len(vals) < 2:
+                    continue
+                print(float(vals[0]), repr(self.refractive_index.imag), repr(self.refractive_index_error))
+                utils.write_nums(file, float(vals[0]), self.refractive_index.imag, self.refractive_index_error)
+    
 
 def get_shape_from_id(id_):
     """Given a shape ID integer, return a reference to the class corresponding to that ID. Note that this returns a class, not an instantiated object."""
