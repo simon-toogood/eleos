@@ -36,7 +36,7 @@ class NemesisCore:
                  ref_file=None, 
                  profiles=list(), 
                  planet="jupiter", 
-                 scattering=False, 
+                 scattering=True, 
                  forward=False,
                  num_iterations=15,
                  num_layers=120, 
@@ -44,9 +44,9 @@ class NemesisCore:
                  num_aerosol_modes=1, 
                  instrument="NIRSPEC", 
                  fmerror_factor=3,
-                 aerosol_radius=1, 
+                 aerosol_radius=2, 
                  aerosol_variance=0.1, 
-                 aerosol_refactive_index=1.3+1e-3j,
+                 aerosol_refractive_index=1.3+1e-3j,
                  cloud_cover=1.0):
         """Create a NEMESIS core directory with a given set of profiles to retrieve
         
@@ -64,6 +64,9 @@ class NemesisCore:
             num_aerosol_modes: The number of aerosol modes to use
             instrument: Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use
             fmerror_factor: The factor by which to multiply the error on the spectrum
+            aerosol_radius: The mean radius of the aerosol particles (this may change in future for many clouds)
+            aerosol_variance: The variance of the aerosol size distributions (this may change in future for many clouds), 
+            aerosol_refractive_index: A complex value for the refractive inde of the aersol (this may change in future for many clouds),
             cloud_cover: If scattering, then this is the fractional cloud cover between 0 and 1 (should not usually be changed)
         """
         # Increment the global core counter
@@ -94,8 +97,12 @@ class NemesisCore:
         self.fmerror_factor = fmerror_factor
         self.aerosol_radius = aerosol_radius
         self.aerosol_variance = aerosol_variance
-        self.aerosol_refactive_index = aerosol_refactive_index
+        self.aerosol_refractive_index = aerosol_refractive_index
         self.cloud_cover = cloud_cover
+
+        # Add a reference to self in each Profile
+        for profile in profiles:
+            profile.core = self
 
         # If in forward mode, set the number of iterations to 0
         if self.forward:
@@ -115,7 +122,6 @@ class NemesisCore:
         if os.path.exists(self.directory):
             shutil.rmtree(self.directory)
         os.makedirs(self.directory)
-        os.makedirs(self.directory + "tmp")
 
         # Create the core!
         self.generate_core()
@@ -150,7 +156,7 @@ class NemesisCore:
         shutil.copy(constants.PATH + "data/statics/nemesis.sol", self.directory)
         shutil.copy(constants.PATH + f"data/{self.planet}/parah2.ref" , self.directory)
 
-    def _generate_inp_file(self):
+    def _generate_inp(self):
         """Generate the nemesis input file
 
         Args:
@@ -181,7 +187,6 @@ class NemesisCore:
             nemesis.apr"""
         out = f"*******Apriori File*******\n           {len(self.profiles)}\n"
         for profile in self.profiles:
-            print(profile)
             profile.shape.copy_required_files(self.directory)
             out += profile.generate_apr_data() + "\n"
         with open(self.directory + "nemesis.apr", mode="w") as file:
@@ -206,7 +211,6 @@ class NemesisCore:
         out = out.replace("<SUNLIGHT>", f"{int(self.scattering)}")
         out = out.replace("<BOUNDARY>", f"{int(self.scattering)}")
         out = out.replace("<BASE>", f"{self.bottom_layer_height:.2f}")
-        out = out.replace("<NUM_LAYERS>", f"{self.num_layers}")
         with open(self.directory+"nemesis.set", mode="w+") as file:
             file.write(out)
 
@@ -315,8 +319,8 @@ class NemesisCore:
             None
         
         Creates:
-            tmp/makephase.inp
-            tmp/normxsc.inp
+            makephase.inp
+            normxsc.inp
             nemesis.xsc
             PHASE{N}.DAT
             hgphase{n}.dat
@@ -330,23 +334,23 @@ class NemesisCore:
         start_wl = min(wls) - 0.1
         end_wl = max(wls) + 0.1
 
-        # Split the refactive index into real and imag
-        real_n = self.aerosol_refactive_index.real
-        imag_n = self.aerosol_refactive_index.imag
+        # Split the refractive index into real and imag
+        real_n = self.aerosol_refractive_index.real
+        imag_n = self.aerosol_refractive_index.imag
 
         # Generate the makephase.inp file
-        with open(self.directory+"tmp/makephase.inp", mode="w+") as file:
+        with open(self.directory+"makephase.inp", mode="w+") as file:
             file.write(f"{self.num_aerosol_modes}\n1\n{start_wl} {end_wl} 0.1\nnemesis.xsc\ny\n1\n{self.aerosol_radius} {self.aerosol_variance}\n2\n1\n{real_n} {imag_n}")
 
         # Generate the normxsc.inp file
-        with open(self.directory+"tmp/normxsc.inp", mode="w+") as file:
+        with open(self.directory+"normxsc.inp", mode="w+") as file:
             file.write(f"nemesis.xsc\n1 1")
 
         # Run Makephase and Normxsc
         cwd = os.getcwd()
         os.chdir(self.directory)
-        os.system("Makephase < tmp/makephase.inp")
-        os.system("Normxsc < tmp/normxsc.inp")
+        os.system("Makephase < makephase.inp")
+        os.system("Normxsc < normxsc.inp")
         os.chdir(cwd)
 
     def _generate_fcloud_ref(self):
@@ -369,14 +373,14 @@ class NemesisCore:
     def generate_core(self):
         self._copy_input_files()
         self._copy_template_files()
-        self._generate_inp_file()
-        self._generate_apr()
+        self._generate_inp()
         self._generate_set()
         self._generate_flags()
         self._generate_aerosol_ref()
         self._generate_kls()
         self._generate_fmerror()
         self._generate_xsc()
+        self._generate_apr()
         self._save_core()
         if self.scattering:
             self._generate_fcloud_ref()
@@ -422,6 +426,25 @@ def reset_core_numbering():
     Returns:
         None"""
     NemesisCore.core_id = 0
+
+
+def clear_parent_directory(parent_directory):
+    """Attempt to delete all the child files/direcotries from the specified folder. It is recommended to call this function at the start
+    of every core generation script as it ensures that the script is fully stateless. If a script generates N cores when first run
+    and is subsequently modified to produce N/2 cores, then the remaining N/2 core directories will remain in the parent directory.
+    This should not matter as the SLURM script will only run the correct subset of cores, but it can get confusing. If the parent directory
+    specified does not exist then it will print a warning and return.
+    
+    Args:
+        parent_directory (str): The directory to clear
+        
+    Returns:
+        None"""
+    try:
+        shutil.rmtree(parent_directory)
+    except FileNotFoundError:
+        warnings.warn(f"Attempted to clear directory {parent_directory} but it does not exist.")
+        return
 
 
 def generate_alice_job(cores, username, memory=16, hours=24):

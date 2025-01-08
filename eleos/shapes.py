@@ -82,9 +82,9 @@ class Shape:
 @shapeclass
 class Shape0(Shape):
     """Profile is to be treated as continuous over the pressure range of runname.ref, the
-next line of the .apr file should then contain a filename, which specifies the a
-priori profile as a function of height and should have the same number of levels
-as the .ref file."""
+    next line of the .apr file should then contain a filename, which specifies the a
+    priori profile as a function of height and should have the same number of levels
+    as the .ref file."""
     ID: ClassVar[int] = 0
     NAMES: ClassVar[list[str]] = ["None"]
     filepath: str
@@ -94,7 +94,6 @@ as the .ref file."""
 
     def generate_apr_data(self):
         return self.filepath.split("/")[-1]
-
 
 @shapeclass
 class Shape1(Shape):
@@ -113,6 +112,23 @@ values together with their estimated errors. """
     def generate_apr_data(self):
         return f"{self.knee_pressure}\n{self.deep_vmr} {self.deep_vmr_error}\n{self.fsh} {self.fsh_error}"
 
+@shapeclass
+class Shape4(Shape):
+    """Very similar to Shape1 in that the profile is to be
+represented as a deep value up to a certain 'knee' pressure, and then a defined
+fractional scale height. However, in this case the knee pressure is also a variable
+parameter and thus must be supplied with an error estimate."""
+    ID: ClassVar[int] = 4
+    NAMES: ClassVar[list[str]] = ["knee_pressure", "deep_vmr", "fsh"]
+    knee_pressure: float
+    knee_pressure_error: float
+    deep_vmr: float
+    deep_vmr_error: float
+    fsh: float
+    fsh_error: float
+
+    def generate_apr_data(self):
+        return f"{self.knee_pressure} {self.knee_pressure_error}\n{self.deep_vmr} {self.deep_vmr_error}\n{self.fsh} {self.fsh_error}"
 
 @shapeclass
 class Shape32(Shape):
@@ -137,6 +153,52 @@ NEMESIS to actually find an optimal value of the knee pressure."""
     def generate_apr_data(self):
         return f"{self.base_pressure} {self.base_pressure_error}\n{self.opacity} {self.opacity_error}\n{self.fsh} {self.fsh_error}"
         
+@shapeclass
+class Shape48(Shape):
+    """As model 32, in that profile is a cloud profile represented by a variable base
+pressure, specific density at the level, fractional scale height, but also a variable
+top pressure. The next line of the .apr file then contains the a priori base
+pressure, followed by the a priori top pressure, opacity and fractional scale
+height values together with their estimated errors."""
+    ID:  ClassVar[int] = 48
+    NAMES: ClassVar[list[str]] = ["base_pressure", "top_pressure", "fsh", "opacity"]
+    base_pressure: float
+    base_pressure_error: float
+    top_pressure: float
+    top_pressure_error: float
+    opacity: float
+    opacity_error: float
+    fsh: float
+    fsh_error: float
+
+    def generate_apr_data(self):
+        return f"{self.base_pressure} {self.base_pressure_error}\n{self.top_pressure} {self.top_pressure_error}\n{self.opacity} {self.opacity_error}\n{self.fsh} {self.fsh_error}"
+        
+@shapeclass
+class Shape444(Shape):
+    """If VARIDENT(IVAR,1) is equal to 444 then the parameter described is a retrieval
+of the imaginary part of a cloud’s complex refractive index spectrum. The cloud
+particle identifier is given by VARIDENT(IVAR,2). The next line contains the
+name of a separate input file, which contains the following information. Line 1
+contains the mean radius of the particle size distribution and error (assumes standard
+size distribution), while line 2 gives the variance of the size distribution and error.
+Line 3 gives the number of wavelengths/wavenumbers for which imaginary
+refractive index spectrum is tabulated, together with the correlation length of this a
+priori spectrum. Line 4 gives a reference wavelength/wavenumber and the value of
+the real part of the refractive index at that reference. Line 5 gives the
+wavelength/wavenumber to which the extinction cross-section spectrum should be
+normalised. Following lines contain the wavelengths/wavenumbers and the a priori
+values of the imaginary refractive index spectrum and errors. In this model, the code
+the real part of the refractive index spectrum is calculated with a Kramers-Kronig
+analysis and then the Mie scattering properties of the particles calculated."""
+    ID: ClassVar[int] = 444
+    NAMES: ClassVar[list[str]] = ["None"]
+    filepath: str
+
+    def generate_apr_data(self):
+        return self.filepath.split("/")[-1]
+
+
 
 def get_shape_from_id(id_):
     """Given a shape ID integer, return a reference to the class corresponding to that ID. Note that this returns a class, not an instantiated object."""
@@ -146,4 +208,4 @@ def get_shape_from_id(id_):
             return shape_class
 
 
-ALL_SHAPES = [Shape0, Shape1, Shape32] #: A list of all the Shape classes
+ALL_SHAPES = [Shape0, Shape1, Shape4, Shape32, Shape48, Shape444] #: A list of all the Shape classes

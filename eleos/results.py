@@ -3,6 +3,7 @@ import itertools as it
 import pandas as pd
 import matplotlib.pyplot as plt
 import glob
+import re
 
 from . import profiles
 from . import utils
@@ -35,6 +36,7 @@ class NemesisResult:
         self.core = cores.load_core(self.core_directory)
         self._read_apr()
         self._read_mre()
+        self.chi_sq = self.get_chi_sq()
 
     def _parse_header_line(self, line, num_fields=-1, cast_to=float):
         """Take in a header line from the .mre file and split each token and cast to a dtype.
@@ -109,6 +111,40 @@ class NemesisResult:
                 df.drop(["i", "ix"], axis=1, inplace=True)
                 profile.add_result(df)
 
+    def _format_time(self, decimal_hours):
+        hours = int(decimal_hours)
+        minutes = (decimal_hours*60) % 60
+        seconds = (decimal_hours*3600) % 60
+        return "%dh %02dm %02ds" % (hours, minutes, seconds)
+
+    def get_chi_sq(self, all_iterations=False):
+        """Get the chi squared values from the .prc file. If all_iterations is True, return a list containing chi squared values for all iterations"""
+        with open(self.core_directory+"nemesis.prc") as file:
+            lines = [line for line in file if "chisq/ny =    " in line]
+            values = [float(re.findall(r"[-+]?\d*\.\d+|\d+", line)[0]) for line in lines]  # Extract all floats
+        if all_iterations:
+            return values
+        else:
+            return values[-1]
+
+    @property
+    def elapsed_time(self):
+        """Return the time taken for the retrieval in hours"""
+        with open(self.core_directory+"nemesis.prc") as file:
+            lines = file.read().splitlines()
+            time = float(re.findall(r"[-+]?\d*\.\d+|\d+", lines[-1])[0])
+        return time / 3600
+
+    def plot_chi_sq(self, ax=None):
+        if ax is None:
+            fig, ax = plt.subplots(1, 1)
+        else:
+            fig = ax.get_figure()
+        ax.plot(self.get_chi_sq(all_iterations=True))
+        ax.axhline(y=1, ls="dashed")
+        ax.set_xlabel("Iteration Number")
+        ax.set_ylabel("$\chi^2$")
+
     def plot_temperature(self, ax=None):
         """Plot the prior and retrieved temperature profile on a matplotlib Axes.
         
@@ -154,10 +190,17 @@ class NemesisResult:
         ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.model, c="r", lw=0.5, label="Model")
         ax.set_yscale("log")
         ax.set_xlabel("Wavelength (μm)")
-        ax.set_ylabel("Radiance (μW cm$^{-2}$ sr$^{-1}$ μm$^{-1}$)")
+        ax.set_ylabel("Radiance\n(μW cm$^{-2}$ sr$^{-1}$ μm$^{-1}$)")
         ax.legend()
         return fig, ax
     
+    def print_summary(self):
+        print(f"Summary of retrieval in {self.core_directory}: ")
+        print(f"Time taken: {self._format_time(self.elapsed_time)}")
+        print(f"Chi squared value: {self.chi_sq}")
+        for p in self.profiles:
+            print(p)
+
 
 def load_multiple_cores(parent_directory):
     """Read in all the cores in a given directory and return a list of NemesisResult objects.

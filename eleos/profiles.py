@@ -3,12 +3,14 @@
 from . import constants
 from . import shapes
 from . import utils
+from . import spx
 
 
 class Profile:
     def __init__(self):
         """This is the base class for all Profile objects. It should never be instantiated directly, use a subclass such as ``GasProfile`` or ``TemperatureProfile``"""
         self.retrieved = False
+        self.core = None
 
     def add_result(self, df):
         """Take in a DataFrame created by reading in the .mre file (results.NemesisResult.read_mre) and assign the correct attributes
@@ -135,7 +137,7 @@ class AerosolProfile(Profile):
             aerosol_id: The ID of the aerosol
             shape: A Shape object to use for the profile shape"""
         super().__init__()
-        self.aerosol_id =abs(aerosol_id)
+        self.aerosol_id = abs(aerosol_id)
         self.shape = shape
 
     def __repr__(self):
@@ -165,6 +167,80 @@ class AerosolProfile(Profile):
         return self.create_nemesis_code() + f" - CP{self.aerosol_id}\n" + self.shape.generate_apr_data()
 
 
+class ImagRefractiveIndexProfile(Profile):
+    def __init__(self, 
+                 aerosol_id, 
+                 aerosol_radius_error, 
+                 aerosol_variance_error,
+                 imag_refractive_index_error,
+                 reference_wavelength):
+        """Create a profile that retrieves the imaginary part of a clouds refractive index. Will require a corresponding AerosolProfile
+        to be defined. This is currently limited to constant refractive index as a function of wavelength.
+
+        Args:
+            aerosol_id (int): The ID of the aerosol
+            mean_radius_error (float): The error on the specified mean particle size (passed into NemesisCore constructor)
+            radius_variance_error (float): The error on the variance of particle size distribution (passed into NemesisCore constructor)
+            imag_refractive_index_error (float): The error on the a priori estimate (passed into NemesisCore constructor)
+            """
+
+        super().__init__()
+        self.aerosol_id = aerosol_id
+        self.aerosol_radius_error = aerosol_radius_error
+        self.aerosol_variance_error = aerosol_variance_error
+        self.imag_refractive_index_error = imag_refractive_index_error
+        self.shape = shapes.Shape444(filepath=f"cloudf{self.aerosol_id}.dat")
+
+    def __repr__(self):
+        return f"<ImagRefractiveIndexProfile [{self.create_nemesis_string()}]>"
+
+    def __str__(self):
+        return f"ImagRefractiveIndexProfile:\n    File: {self.shape.filepath}\n    Retrieved: {self.retrieved}\n"
+
+    def create_nemesis_string(self):
+        """Create the NEMESIS code that represents the profile.
+        
+        Args:
+            None
+            
+        Returns:
+            str: The NEMESIS string"""
+        return f"444 {self.aerosol_id} 444"
+    
+    def generate_apr_data(self):
+        """Generate the section of the .apr file for this profile and create the extra input file 'cloudfN.dat'
+        
+        Args:
+            None
+            
+        Returns:
+            str: The string to write to the .apr file"""
+        
+        # Get first wavelength
+        wl = spx.read(self.core.spx_file).geometries[0].wavelengths[0]
+        # Get number of wavelengths in xsc file
+        with open(self.core.directory+"nemesis.xsc") as file:
+            lines = file.read().split("\n")
+            nwave = (len(lines)-2) // 2
+            refwave = float(lines[1].split()[0])
+        
+        # Generate cloudfN.dat
+        with open(self.core.directory + f"cloudf{self.aerosol_id}.dat", mode="w+") as file:
+            utils.write_nums(file, self.core.aerosol_radius, self.aerosol_radius_error)
+            utils.write_nums(file, self.core.aerosol_variance, self.aerosol_variance_error)
+            file.write(f"{nwave}    -1\n")
+            utils.write_nums(file, refwave, self.core.aerosol_refractive_index.real)
+            utils.write_nums(file, refwave)
+            for line in lines:
+                vals = line.split()
+                if len(vals) < 2:
+                    continue
+                print(float(vals[0]), repr(self.core.aerosol_refractive_index.imag), repr(self.imag_refractive_index_error))
+                utils.write_nums(file, float(vals[0]), self.core.aerosol_refractive_index.imag, self.imag_refractive_index_error)
+        # Return the string
+        return f"{self.create_nemesis_string()} - n{self.aerosol_id}\n{self.shape.generate_apr_data()}"
+
+
 def create_profile_from_code(code):
     """Create a Profile object from a NEMESIS code (eg. '23 0 1'). The Profile.shape attribute will be a refernce to a Shape subclass, 
     NOT an instantiated Shape[N] object as there is no a priori data. To create a fully instantiated Profile and Shape, see ``profiles.create_profile_from_apr``
@@ -185,6 +261,8 @@ def create_profile_from_code(code):
     shape = shapes.get_shape_from_id(tokens[2])
 
     # Create the Profile
+    if tokens[0] == 444:
+        return ImagRefractiveIndexProfile(tokens[1],0,0,0,0)
     if tokens[0] > 0:
         return GasProfile(gas_id=tokens[0], isotope_id=tokens[1], shape=shape)
     elif tokens[0] < 0:
@@ -208,6 +286,9 @@ def create_profile_from_apr(string):
     if isinstance(profile, TemperatureProfile):
         profile.filepath = params[0]
         return profile
+    elif isinstance(profile, ImagRefractiveIndexProfile):
+        return profile
     else:
+        print(params)
         profile.shape = profile.shape(*params)
         return profile

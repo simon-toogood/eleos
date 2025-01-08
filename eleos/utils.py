@@ -32,3 +32,12 @@ def indent(string, level=1, spaces_per_level=4):
     lines = string.split("\n")
     ind = " "*spaces_per_level*level
     return "\n".join([ind+l for l in lines])
+
+
+def write_nums(file, *nums, sep="    ", dp=6):
+    for i, n in enumerate(nums):
+        file.write(f"{n:.{dp}f}")
+        if i != len(nums)-1:
+            file.write(sep)
+        else:
+            file.write("\n")
