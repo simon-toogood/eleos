@@ -10,13 +10,6 @@ from . import spx
 from . import profiles as profiles_ # to avoid namespace shadowing by NemesisCore.profiles
 
 
-# NOTES:
-# aerosol radius for xsc can now be specified in two places; ImagrefractiveIndexProfile and here.
-#  What happens if theyre differnet? Do i need to add a check for the presence of a 444 and overwrite that?
-
-# currently each aerosol mode is writing to a new makepjhase.iunp file that is then overwritten by copy template files() - need to fix this somehow
-# also, need to add a profile for each aerosol profile, not imag profile - maybe specify both in add aerosol mode: ag add aerosol mode(aero profile, imag profile) or add aerosol profile(aero profile, radius, variance etc)
-
 class NemesisCore:
     core_id = 0
 

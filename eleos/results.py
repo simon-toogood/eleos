@@ -178,11 +178,6 @@ class NemesisResult:
         print(f"Time taken: {self._format_time(self.elapsed_time)}")
         print(f"Chi squared value: {self.chi_sq}")
         
-        # for p in self.profiles:
-        #     for attr in p.shape.__dict__:
-        #         print(attr)
-        #     print()
-
         for p in self.profiles:
            print(p)
 
