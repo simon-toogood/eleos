@@ -165,7 +165,7 @@ class NemesisResult:
             fig, ax = plt.subplots(1, 1)
         else:
             fig = ax.get_figure()
-        ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.measured, c="k", lw=0.5, label="Measured")
+        ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.measured, lw=0.5, label="Measured")
         ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.model, c="r", lw=0.5, label="Model")
         ax.set_yscale("log")
         ax.set_xlabel("Wavelength (μm)")
@@ -177,8 +177,14 @@ class NemesisResult:
         print(f"Summary of retrieval in {self.core_directory}: ")
         print(f"Time taken: {self._format_time(self.elapsed_time)}")
         print(f"Chi squared value: {self.chi_sq}")
+        
+        # for p in self.profiles:
+        #     for attr in p.shape.__dict__:
+        #         print(attr)
+        #     print()
+
         for p in self.profiles:
-            print(p)
+           print(p)
 
 
 def load_multiple_cores(parent_directory):

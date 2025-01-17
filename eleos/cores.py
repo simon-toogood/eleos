@@ -7,29 +7,15 @@ import warnings
 
 from . import constants
 from . import spx
+from . import profiles as profiles_ # to avoid namespace shadowing by NemesisCore.profiles
 
-
-# Files:
-#   Thermal:
-#     * aerosol.ref (aerosol profiles as function of height)
-#     * parah2.ref  (don't know, just copy it)
-#     * fmerror.dat (additional error for each wavelength)
-#     * nemesis.fla (various flags)
-#     * nemesis.cia (pointer to collision-induced opacity file)
-#     * nemesis.kls (list of k-tables)
-#     * nemesis.ref (reference heights, pressures, temps and composition)
-#     * nemesis.xsc (aerosol cross-sections)
-#     * nemesis.set (scattering angles, layer info)
-#     * nemesis.apr (a priori file containing vars to retrieve)
-#     * nemesis.spx (spectrum)
-#     * nemesis.inp (input flags)
-#    ** .abo, .nam
-#   
 
 # NOTES:
 # aerosol radius for xsc can now be specified in two places; ImagrefractiveIndexProfile and here.
 #  What happens if theyre differnet? Do i need to add a check for the presence of a 444 and overwrite that?
 
+# currently each aerosol mode is writing to a new makepjhase.iunp file that is then overwritten by copy template files() - need to fix this somehow
+# also, need to add a profile for each aerosol profile, not imag profile - maybe specify both in add aerosol mode: ag add aerosol mode(aero profile, imag profile) or add aerosol profile(aero profile, radius, variance etc)
 
 class NemesisCore:
     core_id = 0
@@ -45,12 +31,8 @@ class NemesisCore:
                  num_iterations=15,
                  num_layers=120, 
                  bottom_layer_height=-80, 
-                 num_aerosol_modes=1, 
                  instrument="NIRSPEC", 
                  fmerror_factor=3,
-                 aerosol_radius=2, 
-                 aerosol_variance=0.1, 
-                 aerosol_refractive_index=1.3+1e-3j,
                  cloud_cover=1.0):
         """Create a NEMESIS core directory with a given set of profiles to retrieve
         
@@ -65,27 +47,12 @@ class NemesisCore:
             num_iterations: Number of iterations to run in the retrieval (if forward is set this has no effect)
             num_layers: The number of atmospheric layers to simulate
             bottom_layer_height: The height in km of the bottom layer of the atmosphere
-            num_aerosol_modes: The number of aerosol modes to use
             instrument: Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use
             fmerror_factor: The factor by which to multiply the error on the spectrum
-            aerosol_radius: The mean radius of the aerosol particles (this may change in future for many clouds)
-            aerosol_variance: The variance of the aerosol size distributions (this may change in future for many clouds), 
-            aerosol_refractive_index: A complex value for the refractive inde of the aersol (this may change in future for many clouds),
             cloud_cover: If scattering, then this is the fractional cloud cover between 0 and 1 (should not usually be changed)
         """
         # Increment the global core counter
         NemesisCore.core_id += 1
-
-        # Set the directories of the parent folder and own cores
-        self.parent_directory = parent_directory
-        self.directory = parent_directory + f"core_{self.core_id}/"
-
-        # Set ref file if not specified:
-        if ref_file is None:
-            self.ref_file = constants.PATH + f"data/{planet}/{planet}.ref"
-            warnings.warn(f"No ref file specified. Using the default in {self.ref_file}")
-        else:
-            self.ref_file = ref_file
 
         # Assign attributes passed in
         self.spx_file = spx_file
@@ -96,39 +63,51 @@ class NemesisCore:
         self.num_iterations = num_iterations
         self.num_layers = num_layers
         self.bottom_layer_height = bottom_layer_height
-        self.num_aerosol_modes = num_aerosol_modes
         self.instrument = instrument
         self.fmerror_factor = fmerror_factor
-        self.aerosol_radius = aerosol_radius
-        self.aerosol_variance = aerosol_variance
-        self.aerosol_refractive_index = aerosol_refractive_index
         self.cloud_cover = cloud_cover
 
-        # Add a reference to self in each Profile
-        for profile in profiles:
-            profile.core = self
+        # Set the directories of the parent folder and own cores
+        self.parent_directory = parent_directory
+        self.directory = parent_directory + f"core_{self.core_id}/"
 
-        # If in forward mode, set the number of iterations to 0
-        if self.forward:
-            self.num_iterations = 0
-
-        # Parse the ref file:
-        self.ref = parse_ref_file(self.ref_file)
-
-        # Raise an error if trying to use features not implemented yet
-        if planet != "jupiter":
-            raise Exception("Eleos does not fully support planets other than Jupiter yet!")
-        if num_aerosol_modes > 1:
-            raise Exception("Eleos does not support multiple aerosol modes yet!")
-        
         # Create the directory tree if it doesn't already exist and clear it if it does
         os.makedirs(self.parent_directory, exist_ok=True)
         if os.path.exists(self.directory):
             shutil.rmtree(self.directory)
         os.makedirs(self.directory)
 
-        # Create the core!
-        self.generate_core()
+        # Set ref file if not specified:
+        if ref_file is None:
+            self.ref_file = constants.PATH + f"data/{planet}/{planet}.ref"
+            warnings.warn(f"No ref file specified. Using the default in {self.ref_file}")
+        else:
+            self.ref_file = ref_file
+        
+        # Parse the ref file:
+        self.ref = parse_ref_file(self.ref_file)
+
+        # Set number of aerosol modes (incremented by add_aerosol_mode)
+        self.num_aerosol_modes = 0
+
+        # Add a reference to self in each Profile and check that there are no Aerosol profiles
+        for profile in self.profiles:
+            if isinstance(profile, (profiles_.AerosolProfile, profiles_.ImagRefractiveIndexProfile)):
+                raise ValueError("Aerosol profile specified in constructor - please use core.add_aerosol_profile(...) instead!")
+            profile.core = self
+
+        # If in forward mode, set the number of iterations to 0
+        if self.forward:
+            self.num_iterations = 0
+
+        # Raise an error if trying to use features not implemented yet
+        if planet != "jupiter":
+            raise Exception("Eleos does not fully support planets other than Jupiter yet!")
+        
+        # Copy in the boilerplate files
+        self._copy_input_files()
+        self._copy_template_files()
+
 
     def __str__(self):
         return f"<NemesisCore: {self.directory}>"
@@ -136,6 +115,10 @@ class NemesisCore:
     def _save_core(self):
         with open(self.directory+"core.pkl", mode="wb") as file:
             pickle.dump(self, file)
+
+    def _add_profile(self, profile):
+        profile.core = self
+        self.profiles.append(profile)
 
     def _copy_input_files(self):
         """Copy the given .spx and .ref file into the core
@@ -158,6 +141,7 @@ class NemesisCore:
         shutil.copy(constants.PATH + "data/statics/nemesis.abo", self.directory)
         shutil.copy(constants.PATH + "data/statics/nemesis.nam", self.directory)
         shutil.copy(constants.PATH + "data/statics/nemesis.sol", self.directory)
+        shutil.copy(constants.PATH + "data/statics/makephase.inp", self.directory)
         shutil.copy(constants.PATH + f"data/{self.planet}/parah2.ref" , self.directory)
 
     def _generate_inp(self):
@@ -250,13 +234,18 @@ class NemesisCore:
         """Generate a number of aerosol reference profile that is 0 at all altitudes.
         
         Args:
-            num_aerosol_modes: Number of aerosol modes to generate
-            
+            None
+
         Returns:
             None
             
         Creates:
             aerosol.ref"""
+        
+        # If there are no clouds defined return immediately
+        if self.num_aerosol_modes == 0:
+            return
+        
         heights = self.ref.height
         with open(self.directory+"aerosol.ref", mode="w+") as file:
             file.write(f"# Generated by Eleos\n")
@@ -312,9 +301,7 @@ class NemesisCore:
             file.write(f"{100:.6e}  {1e-8:.6e}\n")
 
     def _generate_xsc(self):
-        """Run Makephase and Normxsc with the given inputs to generate the .xsc file containing aerosol refractive indicies.
-        Very limited in functionality currently!!
-        Currently only supports mode 1 (Mie scattering, gammma dist.) and constant refractive index over range.
+        """Run Makephase and Normxsc with the given inputs to generate the .xsc and phase files.
         
         Args:
             None
@@ -327,24 +314,25 @@ class NemesisCore:
             normxsc.inp
             nemesis.xsc
             PHASE{N}.DAT
-            hgphase{n}.dat
-            
-        TODO:
-            Add suppport for multiple aerosol modes
-            Add support for other aerosol scattering properties"""
-
+            hgphase{n}.dat"""
+        
+        # Check to see if any aerosols have been added - if not then return immediately
+        if self.num_aerosol_modes == 0:
+            return
+        
         # Read in wavelengths bounds from spx file
         wls = spx.read(self.spx_file).geometries[0].wavelengths
         start_wl = min(wls) - 0.1
         end_wl = max(wls) + 0.1
 
-        # Split the refractive index into real and imag
-        real_n = self.aerosol_refractive_index.real
-        imag_n = self.aerosol_refractive_index.imag
-
-        # Generate the makephase.inp file
-        with open(self.directory+"makephase.inp", mode="w+") as file:
-            file.write(f"{self.num_aerosol_modes}\n1\n{start_wl} {end_wl} 0.1\nnemesis.xsc\ny\n1\n{self.aerosol_radius} {self.aerosol_variance}\n2\n1\n{real_n} {imag_n}")
+        # Replace the number of aerosol modes and start/end/delta wavelengths
+        with open(self.directory+"makephase.inp", mode="r+") as file:
+            lines = file.read().split("\n")
+            lines[0] = str(self.num_aerosol_modes)
+            lines[2] = f"{start_wl} {end_wl} 0.1"
+            file.seek(0)
+            file.write("\n".join(lines))
+            file.truncate()
 
         # Generate the normxsc.inp file
         with open(self.directory+"normxsc.inp", mode="w+") as file:
@@ -368,26 +356,72 @@ class NemesisCore:
             
         Creates:
             fcloud.ref"""
+        
+        # Return immediately if there are no cloud layers defined
+        if self.num_aerosol_modes == 0:
+            return 
+        
         with open(self.directory+"fcloud.ref", mode="w+") as file:
             file.write(f"{len(self.ref)}    {self.num_aerosol_modes}\n")
             for height in self.ref.height:
-                # This will break with more than 1 aerosol mode!
-                file.write(f"      {height:> 9.4f}      {int(self.cloud_cover)}      1\n")
+                file.write(f"      {height:> 9.4f}      {int(self.cloud_cover)}")
+                for n in range(self.num_aerosol_modes):
+                    file.write("      1")
+                file.write("\n")
+
+    def add_aerosol_mode(self, aerosol_profile=None, refractive_index_profile=None, radius=None, variance=None, refractive_index=None):
+        """Add an aerosol mode. This uses the Mie scattering option with constant refractive index over the wavelength range, which is set to be the same as the input .spx files.
+        Can be called with either of the following signatures:
+
+        core.add_aerosol_mode(AerosolProfile(...), radius, variance, refractive_index)
+        or
+        core.add_aerosol_mode(AerosolProfile(...), ImagRefractiveIndexProfile(...))
+
+        to pull parameters from an ImagRefractiveIndexProfile or specified manually respectively
+        
+        Args:
+            refractive_index_profile (ImagRefractiveIndexProfile): If given, use the aerosol radius distribution and refractive index from the Profile specified
+            radius (float): The mean radius of the aerosol particles
+            variance (float): The variance of the particle size distribution
+            refractive_index (complex): The aerosol's refractive index as a complex number (eg. 1.2 + 1e-3j)
+            
+        Returns:
+            None"""
+
+        # Increment aerosol mode counter        
+        self.num_aerosol_modes += 1
+
+        # Add the profile to the core
+        self._add_profile(aerosol_profile)
+
+        # Assign aerosol IDs
+        aerosol_profile.aerosol_id = self.num_aerosol_modes
+
+        # Pull parameters from the refractive index profile and add to the core if given
+        if refractive_index_profile is not None:
+            refractive_index_profile.aerosol_id = self.num_aerosol_modes
+            refractive_index_profile.shape.aerosol_id = self.num_aerosol_modes
+            self._add_profile(refractive_index_profile)
+
+            radius = refractive_index_profile.shape.radius
+            variance = refractive_index_profile.shape.variance
+            refractive_index = refractive_index_profile.shape.refractive_index
+
+        # Add the mode to the bottom of the Makephase input file
+        with open(self.directory+"makephase.inp", mode="a") as file:
+            file.write(f"1\n{radius} {variance}\n2\n1\n{refractive_index.real} {refractive_index.imag}\n")
 
     def generate_core(self):
-        self._copy_input_files()
-        self._copy_template_files()
         self._generate_inp()
         self._generate_set()
         self._generate_flags()
         self._generate_aerosol_ref()
         self._generate_kls()
         self._generate_fmerror()
+        self._generate_fcloud_ref()
         self._generate_xsc()
         self._generate_apr()
-        self._save_core()
-        if self.scattering:
-            self._generate_fcloud_ref()
+        self._save_core()        
 
 
 def parse_ref_file(ref_file):

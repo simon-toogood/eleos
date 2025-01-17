@@ -194,7 +194,6 @@ the real part of the refractive index spectrum is calculated with a Kramers-Kron
 analysis and then the Mie scattering properties of the particles calculated."""
     ID: ClassVar[int] = 444
     NAMES: ClassVar[list[str]] = ["radius", "variance", "refractive_index"]
-    aerosol_id: int
     radius: float
     radius_error: float
     variance: float

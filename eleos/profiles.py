@@ -129,14 +129,13 @@ class GasProfile(Profile):
 
 
 class AerosolProfile(Profile):
-    def __init__(self, aerosol_id=None, shape=None):
+    def __init__(self, shape):
         """Create a profile for a given aerosol with a given shape
         
         Args:
             aerosol_id: The ID of the aerosol
             shape: A Shape object to use for the profile shape"""
         super().__init__()
-        self.aerosol_id = abs(aerosol_id)
         self.shape = shape
 
     def __repr__(self):
@@ -167,7 +166,7 @@ class AerosolProfile(Profile):
 
 
 class ImagRefractiveIndexProfile(Profile):
-    def __init__(self, aerosol_id, shape):
+    def __init__(self, shape):
         """Create a profile that retrieves the imaginary part of a clouds refractive index. Will require a corresponding AerosolProfile
         to be defined. This is currently limited to constant refractive index as a function of wavelength.
 
@@ -179,7 +178,6 @@ class ImagRefractiveIndexProfile(Profile):
             """
 
         super().__init__()
-        self.aerosol_id = aerosol_id
         assert isinstance(shape, shapes.Shape444)
         self.shape = shape
 
