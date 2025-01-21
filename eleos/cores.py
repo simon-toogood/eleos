@@ -44,8 +44,8 @@ class NemesisCore:
             bottom_layer_height: The height in km of the bottom layer of the atmosphere
             instrument: Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use
             fmerror_factor: The factor by which to multiply the error on the spectrum (see also, fmerror_pct and fmerror_value)
-            fmerror_pct: If given, instead of using fmerror_factor or fmerror_value, use a flat percentage of the brightness (see also, fmerror_factor and fmerror_value)
-            fmerror_value: If given, instead of using fmerror_factor or fmerror_pct, use a flat value in brightness units (see also, fmerror_factor and fmerror_pct)
+            fmerror_pct: If given, instead of using fmerror_factor or fmerror_value, use a flat percentage of the brightness (eg. 0.1 = 10%) (see also, fmerror_factor and fmerror_value)
+            fmerror_value: If given, instead of using fmerror_factor or fmerror_pct, use a flat value in W/cm2/sr/um (see also, fmerror_factor and fmerror_pct)
             cloud_cover: If scattering, then this is the fractional cloud cover between 0 and 1 (should not usually be changed)
         """
         # Increment the global core counter
@@ -70,6 +70,11 @@ class NemesisCore:
         self.parent_directory = parent_directory
         self.directory = parent_directory + f"core_{self.core_id}/"
 
+        # Check if we are perfoming a scattering run with more than 39 layers (NEMESIS hates this...)
+        if num_layers > 39 and self.scattering:
+            warnings.warn(f"Too many atmospheric layers specified for a scattering run ({num_layers} vs. 39). Automatically reducing to 39")
+            self.num_layers = 39
+
         # Create the directory tree if it doesn't already exist and clear it if it does
         os.makedirs(self.parent_directory, exist_ok=True)
         if os.path.exists(self.directory):
@@ -92,7 +97,7 @@ class NemesisCore:
         # Add a reference to self in each Profile and check that there are no Aerosol profiles
         for profile in self.profiles:
             if isinstance(profile, (profiles_.AerosolProfile, profiles_.ImagRefractiveIndexProfile)):
-                raise ValueError("Aerosol profile specified in constructor - please use core.add_aerosol_profile(...) instead!")
+                raise ValueError("Aerosol-related profile specified in constructor - please use core.add_aerosol_profile(...) instead!")
             profile.core = self
 
         # If in forward mode, set the number of iterations to 0
@@ -101,7 +106,7 @@ class NemesisCore:
 
         # Raise an error if trying to use features not implemented yet
         if planet != "jupiter":
-            raise Exception("Eleos does not fully support planets other than Jupiter yet!")
+            raise Exception("Eleos does not support planets other than Jupiter yet! ")
         
         # Copy in the boilerplate files
         self._copy_input_files()
@@ -182,9 +187,8 @@ class NemesisCore:
         """Generate the settings file for NEMESIS
         
         Args:
-            num_layers: The number of atmospheric layers
-            bottom_layer_height: The altitude of the bottom layer of the atmosphere
-            
+            None
+
         Returns:
             None
             
@@ -196,6 +200,7 @@ class NemesisCore:
         out = out.replace("<DISTANCE>", f"{constants.DISTANCES[self.planet]:.3f}")
         out = out.replace("<SUNLIGHT>", f"{int(self.scattering)}")
         out = out.replace("<BOUNDARY>", f"{int(self.scattering)}")
+        out = out.replace("<N_LAYERS>", f"{int(self.num_layers)}")
         out = out.replace("<BASE>", f"{self.bottom_layer_height:.2f}")
         with open(self.directory+"nemesis.set", mode="w+") as file:
             file.write(out)

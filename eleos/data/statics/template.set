@@ -14,7 +14,7 @@
  Surface temperature :       341.899
 *********************************************************
  Alt. at base of bot.layer (not limb) :      <BASE>
- Number of atm layers :           39
+ Number of atm layers :           <N_LAYERS>
  Layer type :         1
  Layer integration :  1				   
 *********************************************************
