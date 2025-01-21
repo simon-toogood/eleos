@@ -4,10 +4,23 @@ import pandas as pd
 import matplotlib.pyplot as plt
 import glob
 import re
+from functools import wraps
 
 from . import profiles
 from . import utils
 from . import cores
+
+
+def plotting(func):
+    @wraps(func)
+    def wrapper(self, ax=None, *args, **kwargs):
+        if ax is None:
+            fig, ax = plt.subplots(1, 1)
+        else:
+            fig = ax.get_figure()
+        func(self, ax, *args, **kwargs)
+        return fig, ax
+    return wrapper
 
 
 class NemesisResult:
@@ -88,7 +101,7 @@ class NemesisResult:
                 data = utils.read_between_lines(file, start, end)
                 df = pd.read_table(io.StringIO(data), skiprows=4, sep="\s+", names=["i", "ix", "prior", "prior_error", "retrieved", "retrieved_error"])
                 df.drop(["i", "ix"], axis=1, inplace=True)
-                profile.add_result(df)
+                profile._add_result(df)
 
     def _format_time(self, decimal_hours):
         hours = int(decimal_hours)
@@ -98,13 +111,25 @@ class NemesisResult:
 
     def get_chi_sq(self, all_iterations=False):
         """Get the chi squared values from the .prc file. If all_iterations is True, return a list containing chi squared values for all iterations"""
+        if self.core.forward:
+            pattern = "chisq/ny is equal to :    "
+        else:
+            pattern = "chisq/ny =    "
         with open(self.core_directory+"nemesis.prc") as file:
-            lines = [line for line in file if "chisq/ny =    " in line]
+            lines = [line for line in file if pattern in line]
             values = [float(re.findall(r"[-+]?\d*\.\d+|\d+", line)[0]) for line in lines]  # Extract all floats
         if all_iterations:
             return values
         else:
             return values[-1]
+
+    def print_summary(self):
+        print(f"Summary of retrieval in {self.core_directory}: ")
+        print(f"Time taken: {self._format_time(self.elapsed_time)}")
+        print(f"Chi squared value: {self.chi_sq}")
+        
+        for p in self.profiles:
+           print(p)
 
     @property
     def elapsed_time(self):
@@ -114,17 +139,16 @@ class NemesisResult:
             time = float(re.findall(r"[-+]?\d*\.\d+|\d+", lines[-1])[0])
         return time / 3600
 
-    def plot_chi_sq(self, ax=None):
-        if ax is None:
-            fig, ax = plt.subplots(1, 1)
-        else:
-            fig = ax.get_figure()
-        ax.plot(self.get_chi_sq(all_iterations=True))
+    @plotting
+    def plot_chi_sq(self, ax):
+        print(self.core.num_iterations)
+        ax.plot( self.get_chi_sq(all_iterations=True))
         ax.axhline(y=1, ls="dashed")
         ax.set_xlabel("Iteration Number")
         ax.set_ylabel("$\chi^2$")
 
-    def plot_temperature(self, ax=None):
+    @plotting
+    def plot_temperature(self, ax):
         """Plot the prior and retrieved temperature profile on a matplotlib Axes.
         
         Args:
@@ -141,18 +165,14 @@ class NemesisResult:
         else:
             raise AttributeError("No retrieved temperature profile found!")
 
-        if ax is None:
-            fig, ax = plt.subplots(1, 1)
-        else:
-            fig = ax.get_figure()
         ax.plot(temp_profile.shape.data.retrieved, self.ref.height, c="k", lw=0.5, label="Retrieved")
         ax.plot(temp_profile.shape.data.prior, self.ref.height, c="r", lw=0.5, label="Prior")
         ax.set_xlabel("Temperature (K)")
         ax.set_ylabel("Height (km)")
         ax.legend()
-        return fig, ax
 
-    def plot_spectrum(self, ax=None):
+    @plotting
+    def plot_spectrum(self, ax):
         """Plot the measured and model spectrum on a matplotlib Axes.
         
         Args:
@@ -161,26 +181,13 @@ class NemesisResult:
         Returns:
             matplotlib.Figure: The Figure object to which the Axes belong
             matplotlib.Axes: The Axes object onto which the data was plotted"""
-        if ax is None:
-            fig, ax = plt.subplots(1, 1)
-        else:
-            fig = ax.get_figure()
         ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.measured, lw=0.5, label="Measured")
         ax.plot(self.fitted_spectrum.wavelength, self.fitted_spectrum.model, c="r", lw=0.5, label="Model")
         ax.set_yscale("log")
         ax.set_xlabel("Wavelength (μm)")
         ax.set_ylabel("Radiance\n(μW cm$^{-2}$ sr$^{-1}$ μm$^{-1}$)")
         ax.legend()
-        return fig, ax
-    
-    def print_summary(self):
-        print(f"Summary of retrieval in {self.core_directory}: ")
-        print(f"Time taken: {self._format_time(self.elapsed_time)}")
-        print(f"Chi squared value: {self.chi_sq}")
-        
-        for p in self.profiles:
-           print(p)
-
+ 
 
 def load_multiple_cores(parent_directory):
     """Read in all the cores in a given directory and return a list of NemesisResult objects.

@@ -76,9 +76,8 @@ class Shape:
         pass
 
     def create_required_files(self, directory):
-        """Some Shapes require additional files to be copied into the core directory"""
+        """Some Shapes require additional files to be created/copied into the core directory"""
         pass
-
 
 @shapeclass
 class Shape0(Shape):
@@ -114,6 +113,20 @@ values together with their estimated errors. """
         return f"{self.knee_pressure}\n{self.deep_vmr} {self.deep_vmr_error}\n{self.fsh} {self.fsh_error}"
 
 @shapeclass
+class Shape2(Shape):
+    """Profile is to be represented by a simple scaling of the corresponding profile
+runname.ref (for T, v.m.r.), aerosol.ref (for aerosol density), parah2.ref (for
+para-H2 fraction) or fcloud.ref (for fractional cloud cover). The next line of the
+.apr file then contains the a priori factor and error."""
+    ID: ClassVar[int] = 2
+    NAMES: ClassVar[list[str]] = ["scale_factor"]
+    scale_factor: float
+    scale_factor_error: float
+
+    def generate_apr_data(self):
+        return f"{self.scale_factor} {self.scale_factor_error}"
+
+@shapeclass
 class Shape4(Shape):
     """Very similar to Shape1 in that the profile is to be
 represented as a deep value up to a certain 'knee' pressure, and then a defined
@@ -143,7 +156,7 @@ than the base pressure is set to drop exponentially with increasing pressure wit
 a scale height of 1km, rather than just being set to zero. This makes it easier for
 NEMESIS to actually find an optimal value of the knee pressure."""
     ID:  ClassVar[int] = 32
-    NAMES: ClassVar[list[str]] = ["base_pressure", "fsh", "opacity"]
+    NAMES: ClassVar[list[str]] = ["opacity", "fsh", "base_pressure"]
     base_pressure: float
     base_pressure_error: float
     opacity: float
@@ -237,4 +250,4 @@ def get_shape_from_id(id_):
             return shape_class
 
 
-ALL_SHAPES = [Shape0, Shape1, Shape4, Shape32, Shape48, Shape444] #: A list of all the Shape classes
+ALL_SHAPES = [Shape0, Shape1, Shape2, Shape4, Shape32, Shape48, Shape444] #: A list of all the Shape classes

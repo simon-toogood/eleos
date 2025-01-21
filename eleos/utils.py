@@ -41,3 +41,56 @@ def write_nums(file, *nums, sep="    ", dp=6):
             file.write(sep)
         else:
             file.write("\n")
+
+
+def generate_ascii_table(title, headers, row_headers, rows):
+    """Create a text-based table with a header column using Unicode box drawing characters.
+
+    Args:
+        headers (list): A list of column headers.
+        row_headers (list): A list of row header labels (one for each row).
+        rows (list of list): A list of rows, where each row is a list of column values.
+        top_left (str): The string to place in the top-left cell (default is empty).
+
+    Returns:
+        str: The formatted table as a string.
+    """
+    # Add the top-left string to the headers
+    headers = [title] + headers
+
+    # Determine the column widths, including the row header column
+    num_columns = len(headers)
+    col_widths = [max(len(str(row[i])) for row in rows) for i in range(len(headers) - 1)]
+    col_widths.insert(0, max(len(str(h)) for h in row_headers))  # Row header column
+    col_widths = [max(col_widths[i], len(headers[i])) for i in range(num_columns)]
+
+    # Box drawing characters
+    top_left_corner = "┌"
+    top_right_corner = "┐"
+    bottom_left_corner = "└"
+    bottom_right_corner = "┘"
+    horizontal = "─"
+    vertical = "│"
+    cross_top = "┬"
+    cross_middle = "┼"
+    cross_bottom = "┴"
+
+    # Helper to create rows
+    def make_row(cells, left, middle, right):
+        return f"{left} " + f" {middle} ".join(f"{str(cell):<{col_widths[i]}}" for i, cell in enumerate(cells)) + f" {right}"
+
+    # Header separator
+    def make_separator(left, middle, right):
+        return f"{left}" + f"{middle}".join(horizontal * (col_widths[i] + 2) for i in range(num_columns)) + f"{right}"
+
+    # Build the table
+    table = [
+        make_separator(top_left_corner, cross_top, top_right_corner),  # Top border
+        make_row(headers, vertical, vertical, vertical),  # Header row
+        make_separator("├", cross_middle, "┤"),  # Separator under header
+    ]
+    for row_header, row in zip(row_headers, rows):
+        table.append(make_row([row_header] + row, vertical, vertical, vertical))
+    table.append(make_separator(bottom_left_corner, cross_bottom, bottom_right_corner))  # Bottom border
+
+    return "\n".join(table)

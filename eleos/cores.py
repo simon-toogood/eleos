@@ -21,11 +21,13 @@ class NemesisCore:
                  planet="jupiter", 
                  scattering=True, 
                  forward=False,
-                 num_iterations=15,
+                 num_iterations=30,
                  num_layers=120, 
                  bottom_layer_height=-80, 
                  instrument="NIRSPEC", 
-                 fmerror_factor=3,
+                 fmerror_factor=1,
+                 fmerror_pct=None,
+                 fmerror_value=None,
                  cloud_cover=1.0):
         """Create a NEMESIS core directory with a given set of profiles to retrieve
         
@@ -41,7 +43,9 @@ class NemesisCore:
             num_layers: The number of atmospheric layers to simulate
             bottom_layer_height: The height in km of the bottom layer of the atmosphere
             instrument: Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use
-            fmerror_factor: The factor by which to multiply the error on the spectrum
+            fmerror_factor: The factor by which to multiply the error on the spectrum (see also, fmerror_pct and fmerror_value)
+            fmerror_pct: If given, instead of using fmerror_factor or fmerror_value, use a flat percentage of the brightness (see also, fmerror_factor and fmerror_value)
+            fmerror_value: If given, instead of using fmerror_factor or fmerror_pct, use a flat value in brightness units (see also, fmerror_factor and fmerror_pct)
             cloud_cover: If scattering, then this is the fractional cloud cover between 0 and 1 (should not usually be changed)
         """
         # Increment the global core counter
@@ -58,6 +62,8 @@ class NemesisCore:
         self.bottom_layer_height = bottom_layer_height
         self.instrument = instrument
         self.fmerror_factor = fmerror_factor
+        self.fmerror_pct = fmerror_pct
+        self.fmerror_value = fmerror_value
         self.cloud_cover = cloud_cover
 
         # Set the directories of the parent folder and own cores
@@ -100,7 +106,6 @@ class NemesisCore:
         # Copy in the boilerplate files
         self._copy_input_files()
         self._copy_template_files()
-
 
     def __str__(self):
         return f"<NemesisCore: {self.directory}>"
@@ -269,7 +274,8 @@ class NemesisCore:
             shutil.copy(constants.PATH+"data/jupiter/miri.kls", self.directory+"nemesis.kls")
 
     def _generate_fmerror(self):
-        """For each wavelength in the spx file, multiply the error by factor. Currently only supports 1 spx geometry
+        """For each wavelength in the spx file, adjust the error by a factor (either fmerror_factor, _pct or _value) and write to the fmerror file. 
+        Currently only supports 1 spx geometry
         Args:
             None
             
@@ -280,16 +286,26 @@ class NemesisCore:
             fmerror.dat """
         spx_data = spx.read(self.spx_file).geometries[0]
         num_entries = len(spx_data.wavelengths)
+
         if num_entries > 2048:
             raise IndexError(f"spx file has too many wavelengths! ({num_entries}/2048)")
+        
         with open(self.directory + "fmerror.dat", mode="w+") as file:
             # Header with number of lines 
             file.write(f"{num_entries+2}\n")
+
             # Catch any cases outside the wavelength range (lower)
             file.write(f"{0.1:.6e}  {1e-8:.6e}\n")
-            # Scale the spx error
-            for wl, err in zip(spx_data.wavelengths, spx_data.error):
-                file.write(f"{wl:.6e}  {err*self.fmerror_factor:.6e}\n")
+
+            # Scale the spx error by either fmerror_factor, fmerror_pct or fmerror_value
+            for wl, err, spc in zip(spx_data.wavelengths, spx_data.error, spx_data.spectrum):
+                if self.fmerror_factor is not None:
+                    file.write(f"{wl:.6e}  {err*self.fmerror_factor:.6e}\n")
+                elif self.fmerror_pct is not None:
+                    file.write(f"{wl:.6e}  {spc*self.fmerror_pct:.6e}\n")
+                elif self.fmerror_value is not None:
+                    file.write(f"{wl:.6e}  {self.fmerror_value:.6e}\n")
+
             # Catch any cases outside the wavelength range (upper)
             file.write(f"{100:.6e}  {1e-8:.6e}\n")
 
