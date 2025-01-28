@@ -114,6 +114,12 @@ class TemperatureProfile(Profile):
         self.shape.data = df
         self.retrieved = True
 
+    def get_name(self):
+        if self.label is None:
+            return "Temperature"
+        else:
+            return self.label
+
 
 class GasProfile(Profile):
     def __init__(self, gas_name=None, gas_id=None, isotope_id=0, shape=None, **kwargs):
@@ -162,13 +168,18 @@ class GasProfile(Profile):
             str: The string to write to the .apr file"""
         return self.create_nemesis_code() + " - " + self.gas_name + "\n" + self.shape.generate_apr_data()
 
+    def get_name(self):
+        if self.label is None:
+            return self.gas_name
+        else:
+            return self.label
+
 
 class AerosolProfile(Profile):
     def __init__(self, shape, **kwargs):
         """Create a profile for a given aerosol with a given shape
         
         Args:
-            aerosol_id: The ID of the aerosol
             shape: A Shape object to use for the profile shape
             label: (optional) An arbitrary label to associate with this profile"""
         super().__init__(**kwargs)
@@ -197,6 +208,12 @@ class AerosolProfile(Profile):
             str: The string to write to the .apr file"""
         return self.create_nemesis_code() + f" - CP{self.aerosol_id}\n" + self.shape.generate_apr_data()
 
+    def get_name(self):
+        if self.label is None:
+            return f"Aerosol {self.aerosol_id}"
+        else:
+            return self.label
+
 
 class ImagRefractiveIndexProfile(Profile):
     def __init__(self, shape, **kwargs):
@@ -209,7 +226,7 @@ class ImagRefractiveIndexProfile(Profile):
             label: (optional) An arbitrary label to associate with this profile
             """
 
-        super().__init__()
+        super().__init__(**kwargs)
         assert isinstance(shape, shapes.Shape444)
         self.shape = shape
 
@@ -228,3 +245,9 @@ class ImagRefractiveIndexProfile(Profile):
     
     def generate_apr_data(self):
         return f"{self.create_nemesis_string()} - n{self.aerosol_id}\n{self.shape.generate_apr_data()}"
+
+    def get_name(self):
+        if self.label is None:
+            return f"ImagRefractiveIndex {self.aerosol_id}"
+        else:
+            return self.label

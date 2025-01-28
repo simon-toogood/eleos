@@ -168,6 +168,40 @@ NEMESIS to actually find an optimal value of the knee pressure."""
         return f"{self.base_pressure} {self.base_pressure_error}\n{self.opacity} {self.opacity_error}\n{self.fsh} {self.fsh_error}"
         
 @shapeclass
+class Shape37(Shape):
+    """Cloud which has constant opacity/bar between two specified pressure levels
+(measured in bar). The next line of the .apr file then contains the two pressures
+(in bar) in the order high - low, followed by the a priori opacity/bar and error"""
+    ID: ClassVar[int] = 37
+    NAMES:  ClassVar[list[str]] = ["opacity"]
+    bottom_pressure: float
+    top_pressure: float
+    opacity: float
+    opacity_error: float
+
+    def generate_apr_data(self):
+        return f"{self.bottom_pressure} {self.top_pressure}\n{self.opacity} {self.opacity_error}"
+
+@shapeclass
+class Shape47(Shape):
+    """As model 14, but for a cloud centred at a specified pressure (rather than altitude),
+variable FWHM (log pressure units) and defined total opacity. The next line of
+the .apr file then contains the a priori opacity, the a priori pressure where the
+distribution peaks, and the a priori width (in units of log pressure), with their
+respective errors."""
+    ID: ClassVar[int] = 47
+    NAMES:  ClassVar[list[str]] = ["opacity", "central_pressure", "pressure_width"]
+    central_pressure: float
+    central_pressure_error: float
+    pressure_width: float
+    pressure_width_error: float
+    opacity: float
+    opacity_error: float
+
+    def generate_apr_data(self):
+        return f"{self.opacity} {self.opacity_error}\n{self.central_pressure} {self.central_pressure_error}\n{self.pressure_width} {self.pressure_width_error}"
+
+@shapeclass
 class Shape48(Shape):
     """As model 32, in that profile is a cloud profile represented by a variable base
 pressure, specific density at the level, fractional scale height, but also a variable
@@ -175,7 +209,7 @@ top pressure. The next line of the .apr file then contains the a priori base
 pressure, followed by the a priori top pressure, opacity and fractional scale
 height values together with their estimated errors."""
     ID:  ClassVar[int] = 48
-    NAMES: ClassVar[list[str]] = ["base_pressure", "top_pressure", "fsh", "opacity"]
+    NAMES: ClassVar[list[str]] = ["opacity", "fsh", "base_pressure", "top_pressure"]
     base_pressure: float
     base_pressure_error: float
     top_pressure: float
@@ -238,7 +272,6 @@ analysis and then the Mie scattering properties of the particles calculated."""
                 vals = line.split()
                 if len(vals) < 2:
                     continue
-                print(float(vals[0]), repr(self.refractive_index.imag), repr(self.refractive_index_error))
                 utils.write_nums(file, float(vals[0]), self.refractive_index.imag, self.refractive_index_error)
     
 
@@ -250,4 +283,4 @@ def get_shape_from_id(id_):
             return shape_class
 
 
-ALL_SHAPES = [Shape0, Shape1, Shape2, Shape4, Shape32, Shape48, Shape444] #: A list of all the Shape classes
+ALL_SHAPES = [Shape0, Shape1, Shape2, Shape4, Shape32, Shape37, Shape47, Shape48, Shape444] #: A list of all the Shape classes

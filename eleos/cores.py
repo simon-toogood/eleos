@@ -10,17 +10,20 @@ from . import spx
 from . import profiles as profiles_ # to avoid namespace shadowing by NemesisCore.profiles
 
 
+CORE_ID_COUNTER = 0
+
+
 class NemesisCore:
-    core_id = 0
 
     def __init__(self, 
-                 parent_directory, 
+                 parent_directory,
                  spx_file, 
                  ref_file=None, 
                  profiles=list(), 
                  planet="jupiter", 
                  scattering=True, 
                  forward=False,
+                 prompt_if_exists=True, 
                  num_iterations=30,
                  num_layers=120, 
                  bottom_layer_height=-80, 
@@ -32,24 +35,27 @@ class NemesisCore:
         """Create a NEMESIS core directory with a given set of profiles to retrieve
         
         Args:
-            parent_directory: The directory in which to create the core folder 
-            spx_file: Path to the spectrum file to fit
-            ref_file: Path to the ref file to use (if left blank it will use the default for that planet)
-            profiles: List of profiles.Profile objects to retrieve
-            planet: Name of the planet being observed. Must be one of 'jupiter', 'saturn', 'uranus', 'neptune' or 'titan'.
-            scattering: Whether to run a scattering retrieval or not
-            forward: Whether of not to run a forward model (ie. set number of iterations = 0)
-            num_iterations: Number of iterations to run in the retrieval (if forward is set this has no effect)
-            num_layers: The number of atmospheric layers to simulate
-            bottom_layer_height: The height in km of the bottom layer of the atmosphere
-            instrument: Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use
-            fmerror_factor: The factor by which to multiply the error on the spectrum (see also, fmerror_pct and fmerror_value)
-            fmerror_pct: If given, instead of using fmerror_factor or fmerror_value, use a flat percentage of the brightness (eg. 0.1 = 10%) (see also, fmerror_factor and fmerror_value)
-            fmerror_value: If given, instead of using fmerror_factor or fmerror_pct, use a flat value in W/cm2/sr/um (see also, fmerror_factor and fmerror_pct)
-            cloud_cover: If scattering, then this is the fractional cloud cover between 0 and 1 (should not usually be changed)
+            parent_directory (str):    The directory in which to create the core folder 
+            spx_file (str):            Path to the spectrum file to fit
+            ref_file (str):            Path to the ref file to use (if left blank it will use the default for that planet)
+            profiles List[str]:        List of profiles.Profile objects to retrieve
+            planet (str):              Name of the planet being observed. Must be one of 'jupiter', 'saturn', 'uranus', 'neptune' or 'titan'.
+            scattering (bool):         Whether to run a scattering retrieval or not
+            forward (bool):            Whether of not to run a forward model (ie. set number of iterations = 0)
+            prompt_if_exists (bool):   If the core directory already exists, then ask before continuing
+            num_iterations (int):      Number of iterations to run in the retrieval (if forward is set this has no effect)
+            num_layers (int):          The number of atmospheric layers to simulate
+            bottom_layer_height (int): The height in km of the bottom layer of the atmosphere
+            instrument (str):          Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use
+            fmerror_factor (float):    The factor by which to multiply the error on the spectrum (see also, fmerror_pct and fmerror_value)
+            fmerror_pct (float):       If given, instead of using fmerror_factor or fmerror_value, use a flat percentage of the brightness (eg. 0.1 = 10%) (see also, fmerror_factor and fmerror_value)
+            fmerror_value (float):     If given, instead of using fmerror_factor or fmerror_pct, use a flat value in W/cm2/sr/um (see also, fmerror_factor and fmerror_pct)
+            cloud_cover (bool):        If scattering mode is on, then this is the fractional cloud cover between 0 and 1 (usually doesn't need to be changed)
         """
-        # Increment the global core counter
-        NemesisCore.core_id += 1
+        # Increment the global core counter and store local version
+        global CORE_ID_COUNTER
+        CORE_ID_COUNTER += 1
+        self.id_ = CORE_ID_COUNTER
 
         # Assign attributes passed in
         self.spx_file = spx_file
@@ -68,18 +74,28 @@ class NemesisCore:
 
         # Set the directories of the parent folder and own cores
         self.parent_directory = parent_directory
-        self.directory = parent_directory + f"core_{self.core_id}/"
+        self.directory = parent_directory + f"core_{self.id_}/"
+
+        # Create the directory tree if it doesn't already exist and clear it if it does
+        os.makedirs(self.parent_directory, exist_ok=True)
+        if os.path.exists(self.directory) and prompt_if_exists:
+            if os.path.exists(self.directory + "nemesis.mre"):
+                msg = "There is already a core that has already been run in"
+            elif os.path.exists(self.directory + "nemesis.ref"):
+                msg = "There is already a core that has not been run yet in"
+            else:
+                msg = "There is already data in"
+
+            x = input(f"{msg} {self.directory} - erase and continue? Y/N")
+            if x.lower() == "n":
+                return
+            shutil.rmtree(self.directory)
+        os.makedirs(self.directory)
 
         # Check if we are perfoming a scattering run with more than 39 layers (NEMESIS hates this...)
         if num_layers > 39 and self.scattering:
             warnings.warn(f"Too many atmospheric layers specified for a scattering run ({num_layers} vs. 39). Automatically reducing to 39")
             self.num_layers = 39
-
-        # Create the directory tree if it doesn't already exist and clear it if it does
-        os.makedirs(self.parent_directory, exist_ok=True)
-        if os.path.exists(self.directory):
-            shutil.rmtree(self.directory)
-        os.makedirs(self.directory)
 
         # Set ref file if not specified:
         if ref_file is None:
@@ -93,6 +109,9 @@ class NemesisCore:
 
         # Set number of aerosol modes (incremented by add_aerosol_mode)
         self.num_aerosol_modes = 0
+
+        # Add a list to hold any FixedPeak classes the user wants
+        self.fixed_peaks = []
 
         # Add a reference to self in each Profile and check that there are no Aerosol profiles
         for profile in self.profiles:
@@ -304,11 +323,18 @@ class NemesisCore:
 
             # Scale the spx error by either fmerror_factor, fmerror_pct or fmerror_value
             for wl, err, spc in zip(spx_data.wavelengths, spx_data.error, spx_data.spectrum):
-                if self.fmerror_factor is not None:
+                # Check to see if this peak is fixed
+                flag = False
+                for fxp in self.fixed_peaks:
+                    if fxp.isin(wl):
+                        file.write(f"{wl:.6e}  {fxp.error:.6e}\n")
+                        flag = True
+                # Otherwise, compute the new error
+                if self.fmerror_factor is not None and not flag:
                     file.write(f"{wl:.6e}  {err*self.fmerror_factor:.6e}\n")
-                elif self.fmerror_pct is not None:
+                elif self.fmerror_pct is not None and not flag:
                     file.write(f"{wl:.6e}  {spc*self.fmerror_pct:.6e}\n")
-                elif self.fmerror_value is not None:
+                elif self.fmerror_value is not None and not flag:
                     file.write(f"{wl:.6e}  {self.fmerror_value:.6e}\n")
 
             # Catch any cases outside the wavelength range (upper)
@@ -355,8 +381,8 @@ class NemesisCore:
         # Run Makephase and Normxsc
         cwd = os.getcwd()
         os.chdir(self.directory)
-        os.system("Makephase < makephase.inp")
-        os.system("Normxsc < normxsc.inp")
+        os.system("Makephase < makephase.inp > makephase.out")
+        os.system("Normxsc < normxsc.inp > normxsc.out")
         os.chdir(cwd)
 
     def _generate_fcloud_ref(self):
@@ -382,6 +408,27 @@ class NemesisCore:
                 for n in range(self.num_aerosol_modes):
                     file.write("      1")
                 file.write("\n")
+
+    def get_aerosol_mode(self, id=None, label=None):
+        """Given an aerosol ID (positive, as used by NEMESIS), or an eleos label, return the corresponding AerosolProfile object.
+        Note that as there is no uniqueness requirement on eleos labels, this function will return the Profile with the lowest aerosol ID
+        in the case of multiple similar labels. This may be updated in the future to return a list of all matching profiles.
+        
+        Args:
+            id (int): The aerosol ID
+            label (str): The label associated with the AerosolProfile object
+            
+        Returns:
+            AerosolProfile: The corresponding aerosol profile"""
+
+        if id > self.num_aerosol_modes:
+            raise IndexError(f"Aerosol index is too large! ({id} vs {self.num_aerosol_modes} max.)")
+        for profile in self.profiles:
+            if isinstance(profile, profiles_.AerosolProfile):
+                if id is not None and profile.aerosol_id == id:
+                    return profile
+                if label is not None and profile.label == label:
+                    return profile
 
     def add_aerosol_mode(self, aerosol_profile=None, refractive_index_profile=None, radius=None, variance=None, refractive_index=None):
         """Add an aerosol mode. This uses the Mie scattering option with constant refractive index over the wavelength range, which is set to be the same as the input .spx files.
@@ -426,6 +473,16 @@ class NemesisCore:
             file.write(f"1\n{radius} {variance}\n2\n1\n{refractive_index.real} {refractive_index.imag}\n")
 
     def generate_core(self):
+        print(f"Generating core {self.id_}")
+
+        # Consistency check for aerosol mode ID - sometimes this screws up and I'm not sure why
+        ids = []
+        for p in self.profiles:
+            if isinstance(p, profiles_.AerosolProfile):
+                ids.append(p.aerosol_id)
+        if len(set(ids)) != len(ids):
+            raise ValueError("Aerosol IDs are not consistent!")
+
         self._generate_inp()
         self._generate_set()
         self._generate_flags()
@@ -437,6 +494,20 @@ class NemesisCore:
         self._generate_apr()
         self._save_core()        
 
+    def fix_peak(self, central_wavelength, width, error=1e-15):
+        self.fixed_peaks.append(FixedPeak(central_wavelength, width, error))
+
+
+class FixedPeak:
+    """Used internally to specify if any spectral regions should be fixed so that NEMESIS always fits it there. Don't instantiate, instead use NemesisCore.fix_peak"""
+    def __init__(self, central_wavelength, width, error):
+        self.central_wavelength = central_wavelength
+        self.width = width
+        self.error = error
+
+    def isin(self, wl):
+        return (wl > self.central_wavelength - self.width/2) & (wl < self.central_wavelength + self.width/2)
+    
 
 def parse_ref_file(ref_file):
     """Read in the .ref file provided and return a DataFrame
@@ -477,10 +548,10 @@ def reset_core_numbering():
         
     Returns:
         None"""
-    NemesisCore.core_id = 0
+    CORE_ID_COUNTER = 0
 
 
-def clear_parent_directory(parent_directory):
+def clear_parent_directory(parent_directory, prompt_if_exists=True):
     """Attempt to delete all the child files/direcotries from the specified folder. It is recommended to call this function at the start
     of every core generation script as it ensures that the script is fully stateless. If a script generates N cores when first run
     and is subsequently modified to produce N/2 cores, then the remaining N/2 core directories will remain in the parent directory.
@@ -489,21 +560,25 @@ def clear_parent_directory(parent_directory):
     
     Args:
         parent_directory (str): The directory to clear
+        prompt_if_exists (bool): Whether to confirm with the user before deleting the directory
         
     Returns:
         None"""
-    try:
-        shutil.rmtree(parent_directory)
-    except FileNotFoundError:
-        warnings.warn(f"Attempted to clear directory {parent_directory} but it does not exist.")
-        return
+    
+    if os.path.exists(parent_directory):
+        x = input(f"{parent_directory} already exists - are you sure you want to erase and continue? Y/N")
+        if x.lower() == "n" and prompt_if_exists:
+            print("Quitting")
+            exit()
+        else:
+            shutil.rmtree(parent_directory)
 
 
-def generate_alice_job(cores, username, memory=16, hours=24):
+def generate_alice_job(parent_directory, username, memory=16, hours=24):
     """Generate an sbatch submission script for use on ALICE. The job is an array job over all the specified cores.
     
     Args:
-        cores: Either a single core or a list of cores
+        parent_directory: The directory containing the NEMESIS core directories to be run
         username: The username of the user running the job (eg, scat2, lnf2)
         memory: The amount of memory to use (in GB)
         hours: The number of hours to schedule the job for
@@ -513,20 +588,19 @@ def generate_alice_job(cores, username, memory=16, hours=24):
         
     Creates:
         submitjob.sh in the parent directory of the cores"""
-    
-    # If only one core is passed, make it into a 1-length list for consistency
-    if isinstance(cores, NemesisCore):
-        cores = [cores,]
 
-    script_path = cores[0].parent_directory + "submitjob.sh"
+
+    script_path = parent_directory + "submitjob.sh"
+
+    ncores = len([f for f in os.listdir(parent_directory) if not os.path.isfile(parent_directory + f)])
 
     # Read the submission script and replace template fields
     with open(constants.PATH+"data/statics/template.job", mode="r") as file:
         out = file.read()
         out = out.replace("<MEMORY>", str(memory))
         out = out.replace("<HOURS>", f"{hours:02}")
-        out = out.replace("<N_CORES>", str(len(cores)))
-        out = out.replace("<CORE_DIR>", os.path.abspath(cores[0].parent_directory))
+        out = out.replace("<N_CORES>", str(ncores))
+        out = out.replace("<CORE_DIR>", os.path.abspath(parent_directory))
         out = out.replace("<USERNAME>", username)
 
     # Write the filled template 
