@@ -24,4 +24,4 @@ DISTANCES = {"jupiter": 5.2,
              "saturn": 9.546,
              "uranus": 19.2,
              "neptune": 30.0,
-             "titan": 9.546,} #: The distnaces from the Suyn for all the bodies with significant atmospheres
+             "titan": 9.546,} #: The distnaces from the Sun for all the bodies with significant atmospheres

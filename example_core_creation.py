@@ -10,10 +10,8 @@ ph3 = profiles.GasProfile(gas_name="PH3",
                                 fsh=0.2,           fsh_error=0.2))
 
 nh3 = profiles.GasProfile(gas_name="NH3", 
-                          shape=shapes.Shape4(
-                                knee_pressure=0.8, knee_pressure_error=0.8,
-                                deep_vmr=0.0005,   deep_vmr_error=0.0005,
-                                fsh=0.2,           fsh_error=0.2))
+                          shape=shapes.Shape2(
+                                scale_factor=1.0, scale_factor_error=0.1))
 
 
 # ------ Tropospheric cloud layer ------ #
@@ -39,7 +37,7 @@ n2 = profiles.ImagRefractiveIndexProfile(shape=shapes.Shape444(
 
 # ------ Core creation ------ #
 
-cd = "examplecore/"
+cd = "example/"
 cores.clear_parent_directory(cd)
 
 core = cores.NemesisCore(parent_directory=cd,
@@ -52,5 +50,5 @@ core.add_aerosol_mode(aero2, n2)
 
 core.generate_core()
 
-cores.generate_alice_job(cores=core, username="none", hours=2)
+cores.generate_alice_job(cd, username="none", hours=2)
 cores.run_alice_job(cd)

@@ -79,6 +79,97 @@ def read(path: str) -> SpxFileData:
     )
 
 
+def write(
+    path: str | Path,
+    data: SpxFileData | None = None,
+    **kwargs,
+) -> None:
+    """
+    Write an SPX file to disk, for example:
+
+        spx.write(
+            'spectrum.spx',
+            wavelengths=wavelengths,
+            spectrum=spectrum,  # In MJy/sr - the unit conversion to W/cm2/sr/um is automatic
+            error=error,        # In MJy/sr - the unit conversion to W/cm2/sr/um is automatic
+            fwhm=0,
+            lat=20.0,
+            lon=30.0,
+            phase=0.0,
+            emission=0.0,
+            azimuth=0.0,
+        )
+
+    Args:
+        path: The path to write the SPX file to.
+        data: An SpxFileData object to write to disk. If `None`, the data will be
+            constructed from the keyword arguments.
+        kwargs: Keyword arguments to construct the SpxFileData object if `data` is
+            `None`. These are passed to `construct_spx`.
+    """
+    if data is None:
+        data = construct_spx(**kwargs)
+    else:
+        spectrum=convert_MJysr_to_Wcm2srum(spectrum),
+        error=convert_MJysr_to_Wcm2srum(error)
+
+    lines: list[str] = []
+    ngeom = len(data.geometries)
+    lines.append(f'{data.fwhm}\t{data.lat}\t{data.lon}\t{ngeom}')
+    for g in data.geometries:
+        nconv = len(g.wavelengths)
+        lines.append(f'{nconv}')
+        lines.append(f'{g.nav}')
+        lines.append(
+            f'{g.lat}\t{g.lon}\t{g.phase}\t{g.emission}\t{g.azimuth}\t{g.wgeom}'
+        )
+        for w, s, e in zip(g.wavelengths, g.spectrum, g.error):
+            lines.append(f'{w}\t{s}\t{e}')
+    lines.append('')  # end file with a newline
+    with open(path, 'w') as f:
+        f.write('\n'.join(lines))
+
+
+def construct_spx(
+    wavelengths: np.ndarray,
+    spectrum: np.ndarray,
+    error: np.ndarray,
+    *,
+    fwhm: float,
+    lat: float,
+    lon: float,
+    phase: float,
+    emission: float,
+    azimuth: float,
+) -> SpxFileData:
+    """
+    Construct an SpxFileData object from the given data.
+
+    The units should be W/cm2/sr/micron - you can use the `convert_MJysr_to_Wcm2srum`
+    function to convert from MJy/sr to W/cm2/sr/micron before passing the spectrum
+    and error arrays to this function if necessary.
+    """
+    return SpxFileData(
+        fwhm=fwhm,
+        lat=lat,
+        lon=lon,
+        geometries=(
+            SpxGeometry(
+                nav=1,
+                lat=lat,
+                lon=lon,
+                phase=phase,
+                emission=emission,
+                azimuth=azimuth,
+                wgeom=1,
+                wavelengths=wavelengths,
+                spectrum=spectrum,
+                error=error,
+            ),
+        ),
+    )
+
+
 def convert_MJysr_to_Wcm2srum(
     wavelengths: np.ndarray,
     spectrum: np.ndarray,

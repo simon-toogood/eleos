@@ -6,7 +6,13 @@ from collections import defaultdict
 from . import constants
 from . import shapes
 from . import utils
+from . import results
 
+
+# idea for the future: combine AerosolProfile and ImagRefractiveIndexProfile into a single class with a toggle to retrieve
+# the radius, variance, imag refractive index
+
+# not happy with the implementation for setting priors from previous retrieval...
 
 class Profile:
     def __init__(self, label=None):
@@ -14,6 +20,55 @@ class Profile:
         self.retrieved = False
         self.core = None
         self.label = label
+
+    def __str__(self):
+        # generate table title
+        try:
+            self.label
+        except:
+            self.label = None
+
+        attrs = []
+        for name in self.shape.NAMES:
+            if self.retrieved:
+                attrs.append([f"{name}", f"{name}_error", f"retrieved_{name}", f"retrieved_{name}_error"])
+                headers = ["Prior", "Error", "Retrieved", "Error"]
+            else:
+                attrs.append([f"{name}", f"{name}_error"])
+                headers = ["Prior", "Error"]
+
+        # extract all the attribute values
+        values = []
+        for attr_list in attrs:
+            values.append([])
+            for attr in attr_list:
+                values[-1].append(getattr(self.shape, attr))
+    
+        return utils.generate_ascii_table(self.get_name(), headers, self.shape.NAMES, values)
+
+    @classmethod
+    def from_previous_retrieval(cls, core_directory, label=None):
+        """Create a Profile object using the retrieved parameters from a previous retrieval as priors. Use either id or label to specify the profile to use in the previous retrieval.
+        
+        Args:
+            core_directory: The core directory of the previous retrieval
+            label: The label of the profile to use in the previous retrieval"""
+        
+        res = results.NemesisResult(core_directory)
+
+        prev_profile = None
+        for profile in res.profiles:
+            if profile.label == label and cls == type(profile):
+                prev_profile = profile
+                break
+            
+        if prev_profile is None:
+            raise ValueError(f"Profile with label {label} not found in previous retrieval")
+        
+        new_profile = cls._create_profile_from_previous_retrieval(prev_profile)
+        new_profile.shape._set_prior_to_retrieved()
+
+        return new_profile
 
     def _add_result(self, df):
         """Take in a DataFrame created by reading in the .mre file (results.NemesisResult.read_mre) and assign the correct attributes
@@ -39,41 +94,20 @@ class Profile:
         # Toggle retrieved flag
         self.retrieved = True
 
-    def __str__(self):
-        # generate table title
-        try:
-            self.label
-        except:
-            self.label = None
-        if self.label is not None:
-            title = self.label
-        elif isinstance(self, GasProfile):
-            title = self.gas_name
-        elif isinstance(self, (AerosolProfile, ImagRefractiveIndexProfile)):
-            title = self.__class__.__name__ + f" ID={self.aerosol_id}"
-        else:
-            title = self.__class__.__name__
+    def _clear_result(self):
+        """Clear the retrieved values from the profile
+        
+        Args:
+            None
+            
+        Returns:
+            None"""
+        
+        for name in self.shape.NAMES:
+            for attr in [f"retrieved_{name}", f"retrieved_{name}_error"]:
+                delattr(self.shape, attr)
+        self.retrieved = False
 
-        # get shape attributes
-        attrs = self.shape.__dict__.keys()
-
-        # group attributes together by parameter
-        grouped = defaultdict(list)
-        for attr in attrs:
-            base = attr.removeprefix("retrieved_").removesuffix("_error")
-            grouped[base].append(attr)
-
-        # extract all the attribute values
-        values = []
-        for name, attrs in grouped.items():
-            values.append([])
-            for i, attr in zip_longest(range(4), attrs):
-                if attr is not None:
-                    values[-1].append(getattr(self.shape, attr))
-                else:
-                    values[-1].append("NA")
-    
-        return utils.generate_ascii_table(title, ["Prior", "Error", "Retrieved", "Error"], grouped.keys(), values)
 
 
 class TemperatureProfile(Profile):
@@ -89,6 +123,13 @@ class TemperatureProfile(Profile):
 
     def __repr__(self):
         return f"<TemperatureProfile [{self.create_nemesis_string()}]>"
+
+    def _add_result(self, df):
+        self.shape.data = df
+        self.retrieved = True
+
+    def _create_profile_from_previous_retrieval(prev_profile):
+        raise NotImplementedError()
 
     def create_nemesis_string(self):
         """Create the NEMESIS code that represents the temperature profile. Temperature profiles currently only support mode 0 0 0 so this function's return value is always constant
@@ -110,10 +151,6 @@ class TemperatureProfile(Profile):
             str: The string to write to the .apr file"""
         return "0 0 0 - Temp\n" + self.shape.generate_apr_data()
 
-    def _add_result(self, df):
-        self.shape.data = df
-        self.retrieved = True
-
     def get_name(self):
         if self.label is None:
             return "Temperature"
@@ -130,7 +167,8 @@ class GasProfile(Profile):
             gas_id: The radtrans ID of the gas (eg. 6). Specify either this OR gas_name
             isotope_id: The ID of the isotopologue to use. Use 0 for a mix of all at terrestrial abundance
             shape: A Shape object to use for the profile shape
-            label: (optional) An arbitrary label to associate with this profile"""
+        """
+        
         super().__init__(**kwargs)
         self.isotope_id = isotope_id
         if shape is None:
@@ -144,11 +182,15 @@ class GasProfile(Profile):
         elif gas_id is None:
             self.gas_name = gas_name
             self.gas_id = constants.GASES.loc[constants.GASES.name == gas_name].radtrans_id.iloc[0]
+        self.label = self.gas_name
 
     def __repr__(self):
         return f"<GasProfile {self.gas_name} [{self.create_nemesis_code()}]>"
 
-    def create_nemesis_code(self):
+    def _create_profile_from_previous_retrieval(prev_profile):
+        return GasProfile(gas_name=prev_profile.gas_name, isotope_id=prev_profile.isotope_id, shape=prev_profile.shape, label=prev_profile.label)
+
+    def create_nemesis_string(self):
         """Create the NEMESIS code that represents the gas profile (eg. 23 0 1)
         
         Args:
@@ -166,7 +208,7 @@ class GasProfile(Profile):
             
         Returns:
             str: The string to write to the .apr file"""
-        return self.create_nemesis_code() + " - " + self.gas_name + "\n" + self.shape.generate_apr_data()
+        return self.create_nemesis_string() + " - " + self.gas_name + "\n" + self.shape.generate_apr_data()
 
     def get_name(self):
         if self.label is None:
@@ -188,7 +230,10 @@ class AerosolProfile(Profile):
     def __repr__(self):
         return f"<AerosolProfile {self.aerosol_id} [{self.create_nemesis_code()}]>"
 
-    def create_nemesis_code(self):
+    def _create_profile_from_previous_retrieval(prev_profile):
+        return AerosolProfile(label=prev_profile.label, shape=prev_profile.shape)
+
+    def create_nemesis_string(self):
         """Create the NEMESIS code that represents the aerosol profile (eg. -1 0 32)
         
         Args:
@@ -206,7 +251,7 @@ class AerosolProfile(Profile):
             
         Returns:
             str: The string to write to the .apr file"""
-        return self.create_nemesis_code() + f" - CP{self.aerosol_id}\n" + self.shape.generate_apr_data()
+        return self.create_nemesis_string() + f" - CP{self.aerosol_id}\n" + self.shape.generate_apr_data()
 
     def get_name(self):
         if self.label is None:
@@ -232,6 +277,9 @@ class ImagRefractiveIndexProfile(Profile):
 
     def __repr__(self):
         return f"<ImagRefractiveIndexProfile [{self.create_nemesis_string()}]>"
+
+    def _create_profile_from_previous_retrieval(prev_profile):
+        return ImagRefractiveIndexProfile(label=prev_profile.label, shape=prev_profile.shape)
 
     def create_nemesis_string(self):
         """Create the NEMESIS code that represents the profile.

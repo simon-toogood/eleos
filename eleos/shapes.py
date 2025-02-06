@@ -65,6 +65,13 @@ class Shape:
             out += f"\n    {name}: {value}"    
         return out
     
+    def _set_prior_to_retrieved(self):
+        """Set the prior values to the retrieved values and delete the retrived_* attributes."""
+        for base in self.NAMES:
+            for name in [base, f"{base}_error"]:
+                setattr(self, name, getattr(self, "retrieved_"+name))
+                delattr(self, "retrieved_"+name)
+
     def generate_apr_data(self):
         """Generate the section of the .apr file that stores the shape parameters
         
@@ -133,7 +140,7 @@ represented as a deep value up to a certain 'knee' pressure, and then a defined
 fractional scale height. However, in this case the knee pressure is also a variable
 parameter and thus must be supplied with an error estimate."""
     ID: ClassVar[int] = 4
-    NAMES: ClassVar[list[str]] = ["knee_pressure", "deep_vmr", "fsh"]
+    NAMES: ClassVar[list[str]] = ["deep_vmr", "fsh", "knee_pressure"]
     knee_pressure: float
     knee_pressure_error: float
     deep_vmr: float
@@ -143,6 +150,26 @@ parameter and thus must be supplied with an error estimate."""
 
     def generate_apr_data(self):
         return f"{self.knee_pressure} {self.knee_pressure_error}\n{self.deep_vmr} {self.deep_vmr_error}\n{self.fsh} {self.fsh_error}"
+
+@shapeclass
+class Shape20(Shape):
+    """Very similar to case 1 in that profile is to be represented as a deep value up to a
+certain ‘knee’ pressure, and then a defined fractional scale height. However, in
+this parameterisation, the profile is forced to a very small number at pressures less
+than a ‘tropopause’ temperature. The next line of the .apr file then contains the
+‘knee’ and ‘tropopause’ pressures, followed by the a priori deep and fractional
+scale height values together with their estimated errors.e."""
+    ID: ClassVar[int] = 20
+    NAMES: ClassVar[list[str]] = ["deep_vmr", "fsh"]
+    knee_pressure: float
+    tropopause_pressure: float
+    deep_vmr: float
+    deep_vmr_error: float
+    fsh: float
+    fsh_error: float
+
+    def generate_apr_data(self):
+        return f"{self.knee_pressure} {self.tropopause_pressure}\n{self.deep_vmr} {self.deep_vmr_error}\n{self.fsh} {self.fsh_error}"
 
 @shapeclass
 class Shape32(Shape):
@@ -283,4 +310,4 @@ def get_shape_from_id(id_):
             return shape_class
 
 
-ALL_SHAPES = [Shape0, Shape1, Shape2, Shape4, Shape32, Shape37, Shape47, Shape48, Shape444] #: A list of all the Shape classes
+ALL_SHAPES = [Shape0, Shape1, Shape2, Shape4, Shape20, Shape32, Shape37, Shape47, Shape48, Shape444] #: A list of all the Shape classes

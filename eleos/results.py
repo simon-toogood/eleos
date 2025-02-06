@@ -11,6 +11,8 @@ from functools import wraps
 from . import profiles
 from . import utils
 from . import cores
+from . import constants
+from . import parsers
 
 
 def plotting(func):
@@ -25,17 +27,38 @@ def plotting(func):
     return wrapper
 
 
+def plotting_altitude(func):
+    @wraps(func)
+    def wrapper(self, ax=None, pressure=True, *args, **kwargs):
+        if ax is None:
+            fig, ax = plt.subplots(1, 1)
+        else:
+            fig = ax.get_figure()
+        if pressure:
+            ax.set_yscale("log")
+            ax.set_ylabel("Pressure (bar)")
+            ax.invert_yaxis()
+        else:
+            ax.set_ylabel("Height (km)")
+        func(self, ax, pressure, *args, **kwargs)
+        return fig, ax
+    return wrapper
+
+
 class NemesisResult:
     """Class for storing the results of a NEMESIS retrieval.
     
     Attributes:
-        core_directory (str):     The directory of the core being analysed
-        ref (pandas.DataFrame):   A DataFrame containing the data in the .ref file
-        core (NemesisCore):       The NemesisCore object that generated the core directory
-        profiles (list[Profile]): A list of all the retrieved Profile objects from the run
-        num_retrievals (int):     I don't know what this param is - first field in the .mre file
-        latitude (float):         Latitude of the observed spectrum
-        longitude (float):        Longitude of the observed spectrum
+        core_directory (str):                   The directory of the core being analysed
+        ref (pandas.DataFrame):                 A DataFrame containing the data in the .ref file
+        core (NemesisCore):                     The NemesisCore object that generated the core directory
+        profiles (list[Profile]):               A list of all the retrieved Profile objects from the run
+        latitude (float):                       Latitude of the observed spectrum
+        longitude (float):                      Longitude of the observed spectrum
+        chi_sq (float):                         The chi-squared value of the retrieval
+        retrieved_spectrum (pandas.DataFrame):  A DataFrame containing the measured and modelled spectrum
+        retrieved_aerosols (pandas.DataFrame):  A DataFrame containing the retrieved aerosol profiles
+        retrieved_chemicals (pandas.DataFrame): A DataFrame containing the retrieved chemical profiles
 """
     def __init__(self, core_directory):
         """Inititalise a NemesisResult class
@@ -47,59 +70,14 @@ class NemesisResult:
         self.profiles = self.core.profiles
         self._read_mre()
         self.retrieved_aerosols = self._read_aerosol_prf()
+        self.retrieved_chemicals = self._read_nemesis_prf()
         self.chi_sq = self.get_chi_sq()
-
-    def _parse_mre_header_line(self, line, num_fields=-1, cast_to=float):
-        """Take in a header line from the .mre file and split each token and cast to a dtype.
-        Eg. "10     2     4     7.2" -> [10.0, 2.0, 4.0, 7.2]
-        
-        Args:
-            line (str): The line to tokenise
-            num_fields: The number of fields to include, starting from the left-hand side. Default is to include all fields
-            cast_to: The type to cast the fields to.
-        
-        Returns:
-            list[cast_to]: List of fields"""
-        fields = [cast_to(x) for x in line.split()[:num_fields]]
-        if num_fields == 1:
-            return fields[0]
-        else:
-            return fields
-                    
+  
     def _read_mre(self):
-        """Read in the nemesis.mre file"""
-        mre_file = self.core_directory + "nemesis.mre"
-        with open(mre_file) as file:
-            mre_data = file.read().split("\n")
-
-        header = []
-        blocks = []
-        for i, line in enumerate(mre_data):
-            # Read the first 3 lines to the header array
-            if i < 3:
-                header.append(line)
-            # Find the boundaries between result blocks
-            elif "Variable" in line:
-                blocks.append(i)
-        blocks.append(i)
-
-        # Set some attributes from the header info    
-        self.num_retrievals = self._parse_mre_header_line(header[0], num_fields=1, cast_to=int)
-        self.ispec, self.ngeom, self.ny1, self.nx, self.ny2 = self._parse_mre_header_line(header[1], num_fields=5, cast_to=int)
-        self.latitude, self.longitude = self._parse_mre_header_line(header[2], num_fields=2, cast_to=float)
-
-        # Read in the fitted spectrum as a DataFrame
-        self.retrieved_spectrum = pd.read_table(mre_file, 
-                                                names=["wavelength", "measured", "error", "pct_error", "model", "pct_diff"],
-                                                index_col=0, sep="\s+", skiprows=5, nrows=blocks[0]-7)
-
-        # Read in each retrieved parameter and add the result to the Shape object
-        with open(mre_file) as file:
-            for profile, (start, end) in zip(self.profiles, it.pairwise(blocks)):
-                data = utils.read_between_lines(file, start, end)
-                df = pd.read_table(io.StringIO(data), skiprows=4, sep="\s+", names=["i", "ix", "prior", "prior_error", "retrieved", "retrieved_error"])
-                df.drop(["i", "ix"], axis=1, inplace=True)
-                profile._add_result(df)
+        mre = parsers.NemesisMre(self.core_directory + "nemesis.mre")
+        self.__dict__ |= mre.__dict__
+        for profile, df in zip(self.profiles, mre.retrieved_parameters):
+            profile._add_result(df)
 
     def _read_aerosol_prf(self):
         header = ["height"] + [f"aerosol_{x}" for x in range(1, self.core.num_aerosol_modes+1)]
@@ -116,6 +94,7 @@ class NemesisResult:
         Returns:
             pandas.DataFrame: A DataFrame containing the data from the .itr file with columns for each parameter"""
         
+        # Reading the mre file to get the order of the parameters in the state vector
         with open(self.core_directory + "nemesis.mre") as file:
             lines = file.read().split("\n")
             toggle = False
@@ -135,32 +114,60 @@ class NemesisResult:
             vec = pd.DataFrame(great)
             vec.columns = ["i", "ix", "xa", "sa_err", "xn", "xn_err"]
 
+        # Reading the itr file and extracting state vector for each iteration and the prior vector
         with open(self.core_directory + "nemesis.itr") as file:
+            # Get the prior state vector
             prior = [float(x) for x in file.readlines()[5].split()]
             exps = []
             for p, v in zip(prior, vec.xa):
                 exps.append(np.isclose(p, v))
             
+            # Re-read the file and get the state vector for each iteration (which is the 3rd line after each blank line)
             file.seek(0)
             data = []
+            count = -1
             for i, line in enumerate(file.read().split("\n")):
-                if i in np.arange(50)*23 + 4:
+                if line == " ":
+                    count = 3
+                else:
+                    count -= 1
+                if count == 0:
                     d = []
                     for i, v in enumerate(line.split()):
                         d.append(float(v) if exps[i] else np.exp(float(v)))
                     data.append(d)
+
+            # Assign the results to a DataFrame
             data = pd.DataFrame(data)
-            
-        state_vector_names = [f"{p.get_name()} {name.replace('_', ' ')}" for p in self.profiles for name in p.shape.NAMES]
-        data.columns = state_vector_names
+            state_vector_names = [f"{p.get_name()} {name.replace('_', ' ')}" for p in self.profiles for name in p.shape.NAMES]
+            data.columns = state_vector_names
 
         return data
 
-    def _format_time(self, decimal_hours):
-        hours = int(decimal_hours)
-        minutes = (decimal_hours*60) % 60
-        seconds = (decimal_hours*3600) % 60
-        return "%dh %02dm %02ds" % (hours, minutes, seconds)
+    def _read_nemesis_prf(self):
+        with open(self.core_directory + "nemesis.prf") as file:
+            lines = file.read().split("\n")
+        
+        names = []
+        for i, line in enumerate(lines):
+            # Skip first two lines and any blank lines
+            if i in (0,1) or line == "":
+                continue
+
+            # Get the index of the starting line for the profiles
+            if "height" in line:
+                break
+            
+            # Otherwise it's a gas id
+            else:
+                gas_id, isotope_id = [int(x) for x in re.findall(r'\d+', line)]
+                gas_name = constants.GASES[constants.GASES.radtrans_id == gas_id].name.iloc[0]
+                names.append(f"{gas_name} {isotope_id}")
+
+        out = pd.read_table(self.core_directory+"nemesis.prf", skiprows=i+1, sep="\s+")
+        out.columns = ["height", "pressure", "temp"] + names
+
+        return out
 
     def get_chi_sq(self, all_iterations=False):
         """Get the chi squared values from the .prc file. If all_iterations is True, return a list containing chi squared values for all iterations"""
@@ -177,8 +184,8 @@ class NemesisResult:
             return values[-1]
 
     def print_summary(self):
-        print(f"Summary of retrieval in {self.core_directory}: ")
-        print(f"Time taken: {self._format_time(self.elapsed_time)}")
+        print(f"Summary of retrieval in {self.core_directory}")
+        print(f"Time taken: {utils.format_decimal_hours(self.elapsed_time)}")
         print(f"Chi squared value: {self.chi_sq}")
         
         for p in self.profiles:
@@ -194,35 +201,10 @@ class NemesisResult:
 
     @plotting
     def plot_chisq(self, ax):
-        print(self.core.num_iterations)
         ax.plot( self.get_chi_sq(all_iterations=True))
         ax.axhline(y=1, ls="dashed")
         ax.set_xlabel("Iteration Number")
         ax.set_ylabel("$\chi^2$")
-
-    @plotting
-    def plot_temperature(self, ax):
-        """Plot the prior and retrieved temperature profile on a matplotlib Axes.
-        
-        Args:
-            ax: The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes
-            
-        Returns:
-            matplotlib.Figure: The Figure object to which the Axes belong
-            matplotlib.Axes: The Axes object onto which the data was plotted"""
-        # Find retrieved temperature profile
-        for p in self.profiles:
-            if isinstance(p, profiles.TemperatureProfile):
-                temp_profile = p
-                break
-        else:
-            raise AttributeError("No retrieved temperature profile found!")
-
-        ax.plot(temp_profile.shape.data.retrieved, self.core.ref.height, c="k", lw=0.5, label="Retrieved")
-        ax.plot(temp_profile.shape.data.prior, self.core.ref.height, c="r", lw=0.5, label="Prior")
-        ax.set_xlabel("Temperature (K)")
-        ax.set_ylabel("Height (km)")
-        ax.legend()
 
     @plotting
     def plot_spectrum(self, ax):
@@ -251,39 +233,136 @@ class NemesisResult:
         ax.legend()
 
     @plotting
-    def plot_aerosol_profiles(self, ax, pressure=True):
+    def plot_spectrum_residuals(self, ax):
+        #ax.plot(self.retrieved_spectrum.wavelength, self.retrieved_spectrum.measured, lw=0.5, label="Measured")
+        residuals = (self.retrieved_spectrum.model - self.retrieved_spectrum.measured) / self.retrieved_spectrum.measured
 
+        ax.plot(self.retrieved_spectrum.wavelength, residuals, label="Residuals")
+        ax.fill_between(self.retrieved_spectrum.wavelength, -self.retrieved_spectrum.error / self.retrieved_spectrum.measured, self.retrieved_spectrum.error / self.retrieved_spectrum.measured, alpha=0.5, label="Error")
+
+        ax.set_xlabel("Wavelength (μm)")
+        ax.set_ylabel("Residuals / Measurement")
+        ax.legend()
+
+    @plotting_altitude
+    def plot_temperature(self, ax, pressure):
+        """Plot the prior and retrieved temperature profile on a matplotlib Axes.
+        
+        Args:
+            ax: The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes
+            pressure: Whether to plot the temperature profile against pressure (if True) or height (if False)
+
+        Returns:
+            matplotlib.Figure: The Figure object to which the Axes belong
+            matplotlib.Axes: The Axes object onto which the data was plotted"""
+
+        print(self.core.ref)
+
+        # Get the appropriate y axis data
+        y = self.core.ref.pressure if pressure else self.core.ref.height
+        
+        # Find retrieved temperature profile
+        temp_profile = None
+        for p in self.profiles:
+            if isinstance(p, profiles.TemperatureProfile):
+                temp_profile = p
+                ax.plot(temp_profile.shape.data.retrieved, y, c="k", lw=0.5, label="Retrieved")
+                ax.plot(temp_profile.shape.data.prior, y, c="r", lw=0.5, label="Prior")
+                ax.legend()
+                break
+
+        # If temperature profile not retrieved, plot the temperature profile in the .ref file
+        if temp_profile is None:
+            ax.plot(self.core.ref.temp, y)
+
+        ax.set_xlabel("Temperature (K)")
+
+    @plotting_altitude
+    def plot_aerosol_profiles(self, ax, pressure, unit="tau/bar"):
+        """Plot the retrieved aerosol profiles either in units of particles/gram of atmosphere or in units of optical thickness/bar
+        against either height or pressure
+        
+        Args:
+            ax: The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes
+            unit: The unit to convert the aerosol profiles to. Valid values are 'tau/bar' for optical thickness/bar, 'cm2/g' for the native prf units
+            pressure: Whether to plot the aerosol profiles against pressure (if True) or height (if False)
+            
+        Returns:
+            matplotlib.Figure: The Figure object to which the Axes belong
+            matplotlib.Axes: The Axes object onto which the data was plotted"""
+        
         # Iterate over every retrieved aerosol
         for name in self.retrieved_aerosols.columns:
             if name in ("height", "pressure"):
                 continue
 
+            if unit == "tau/bar":
+                # only god himself knows whats going on with these units...
+                self.retrieved_aerosols[name] *= 1e5 / 10 / utils.get_planet_gravity(self.core.planet)
+                unit_label = "Optical thickness / bar"
+            elif unit == "cm2/g":
+                unit_label = "Aerosol cross-section (cm$^2$ / g)"
+            else:
+                raise ValueError("Invalid unit! - Must be one of 'tau/bar', 'cm2/g'")
+
             # Get a label to use as the legend label - either the custom label or aerosol_<ID>
             id = int(name.removeprefix("aerosol_"))
-            print(self.core.id_, id)
             profile = self.core.get_aerosol_mode(id=id)
             if profile.label is not None:
                 leg_label = profile.label
             else:
                 leg_label = name
 
-            if pressure:
-                # Plot in units of log pressure
-                ax.plot(self.retrieved_aerosols[name], self.retrieved_aerosols.pressure, label=leg_label)
-                ax.set_ylabel("Pressure (bar)")
-                ax.set_yscale("log")
-                # Reverse the axis limits so height increases up the plot
-                ax.set_ylim(self.retrieved_aerosols.pressure.iloc[0], self.retrieved_aerosols.pressure.iloc[-1])
-            else:
-                # Plot in units of height
-                ax.plot(self.retrieved_aerosols[name], self.retrieved_aerosols.height, label=leg_label)
-                ax.set_ylabel("Height (km)")
+            y = self.retrieved_aerosols.pressure if pressure else self.retrieved_aerosols.height
+            ax.plot(self.retrieved_aerosols[name], y, label=leg_label)
 
-        ax.set_xlabel("Aerosols (units?)")
+        ax.set_xlabel(unit_label)
         ax.legend()
 
-    def plot_iter(self, figsize=(14, 10)):
-        """Plot the state vector for each iteration of the retrieval. Each retreived parameter is plotted on a separate axis
+    @plotting_altitude
+    def plot_chemical_profiles(self, ax, pressure, gas_names=None):
+        """"""
+        y = self.retrieved_chemicals["pressure"] if pressure else self.retrieved_chemicals["height"]
+        
+        if gas_names is None:
+            gas_names = [x for x in self.retrieved_chemicals.columns if x not in ("height", "pressure", "temp")]
+        for gas_name in gas_names:
+            ax.plot(self.retrieved_chemicals[gas_name], y, label=gas_name)
+        
+        ax.set_xscale("log")
+        ax.set_xlabel("Volume Mixing Ratio")
+        ax.legend()
+
+    def make_summary_plot(self, figsize=(11, 10)):
+        """Make a summary plot with prior and retrieved spectra, error on the spectra, aerosol and chemical profiles, and chi-squared values.
+        
+        Args:
+            figsize (int, int): matplotlib figure size
+            
+        Returns:
+            matplotlib.Figure: The produced figure
+            dict(str: matplotlib.Axes): The axes of the produced figure"""
+        names = []
+        for profile in self.profiles:
+            if isinstance(profile, profiles.GasProfile):
+                names.append(f"{profile.gas_name} {profile.isotope_id}")
+
+        fig, axs = plt.subplot_mosaic("AAA\nBBB\nCDE", 
+                              gridspec_kw={"hspace": 0.25, "wspace": 0.35},
+                              figsize=figsize)
+
+        self.plot_spectrum(ax=axs["A"])
+        self.plot_spectrum_residuals(ax=axs["B"])
+        self.plot_chisq(ax=axs["C"])
+        self.plot_aerosol_profiles(ax=axs["D"])
+        self.plot_chemical_profiles(ax=axs["E"], gas_names=names)
+
+        fig.savefig(self.core_directory+"plots/summary.png", bbox_inches="tight", dpi=400)
+
+        return fig, axs
+
+    def make_iterations_plot(self, figsize=(14, 10)):
+        """Plot the state vector for each iteration of the retrieval. Each retreived parameter is plotted on a separate axis.
         
         Args:
             None
@@ -307,7 +386,12 @@ class NemesisResult:
         
         fig.supxlabel('Iteration Number')
         fig.tight_layout()
+        fig.savefig("plots/iterations.png", bbox_inches="tight", dpi=400)
         return fig, axs
+
+    def savefig(self, name, **kwargs):
+        plt.savefig(self.core_directory + "plots/" + name, bbox_inches="tight", **kwargs)
+
 
 def load_multiple_cores(parent_directory):
     """Read in all the cores in a given directory and return a list of NemesisResult objects.
@@ -322,3 +406,5 @@ def load_multiple_cores(parent_directory):
     for core in sorted(glob.glob(parent_directory+"core_*/")):
         out.append(NemesisResult(core))
     return out
+
+

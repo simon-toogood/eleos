@@ -1,3 +1,25 @@
+import numpy as np
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+import os
+import re
+
+
+# NumPy extension functions
+
+def find_nearest(array, value):
+    array = np.asarray(array)
+    idx = (np.abs(array - value)).argmin()
+    return idx, array[idx]
+
+
+def nanaverage(data, weights, axis=None):
+    ma = np.ma.MaskedArray(data, mask=np.isnan(data))
+    return np.ma.average(ma, weights=weights)
+
+
+# String / file operation functions
+
 def read_between_lines(file, start, end):
     """Take in an open file object and get the data between line numbers 'start' and 'end'.
     It is inclusive of start and exclusive of end (ie. start <= line < end)
@@ -94,3 +116,29 @@ def generate_ascii_table(title, headers, row_headers, rows):
     table.append(make_separator(bottom_left_corner, cross_bottom, bottom_right_corner))  # Bottom border
 
     return "\n".join(table)
+
+
+def get_floats_from_string(string):
+    pattern = R"[-+]?(?:\d*\.*\d+)"
+    floats = re.findall(pattern, string)
+    return [float(x) for x in floats]
+
+
+def get_ints_from_string(string):
+    pattern = R"[-+]?(?:\d*\.*\d+)"
+    floats = re.findall(pattern, string)
+    return [int(x) for x in floats]
+
+
+def format_decimal_hours(decimal_hours):
+    hours = int(decimal_hours)
+    minutes = (decimal_hours*60) % 60
+    seconds = (decimal_hours*3600) % 60
+    return "%dh %02dm %02ds" % (hours, minutes, seconds)
+
+
+# PLanet data functions
+
+def get_planet_gravity(planet):
+    return {"jupiter": 24.79, "saturn": 10.44, "uranus": 8.69, "neptune": 11.15, "titan":1.352}[planet.lower()]
+

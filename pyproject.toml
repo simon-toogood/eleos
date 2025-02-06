@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0", "pandas", "matplotlib", "numpy", "astropy"]
+requires = ["setuptools>=61.0", "pandas", "matplotlib", "numpy", "astropy", "planetmapper"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "nemesis_eleos"
-version = "0.7.2"
+version = "0.7.3"
 authors = [
   { name="Simon Toogood", email="scat2@leicester.ac.uk" },
 ]
