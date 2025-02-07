@@ -3,6 +3,7 @@
 import pandas as pd
 import itertools as it
 import io
+from pathlib import Path
 
 from . import utils
 from . import constants
@@ -12,7 +13,7 @@ from . import constants
 
 class NemesisRef:
     def __init__(self, filepath):
-        self.filepath = filepath
+        self.filepath = Path(filepath)
         self.read()
 
     def read(self):
@@ -63,7 +64,7 @@ class NemesisRef:
 
 class NemesisMre:
     def __init__(self, filepath):
-        self.filepath = filepath
+        self.filepath = Path(filepath)
         self.read()
 
     def _parse_header_line(self, line, num_fields, cast_to):

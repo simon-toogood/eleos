@@ -2,6 +2,7 @@
 
 import pandas as pd
 import os
+from pathlib import Path
 
 
 def _read_radtrans_gas_id():
@@ -16,7 +17,7 @@ def _read_radtrans_gas_id():
     df = df.astype({"radtrans_id":int, "name": str, "H04": int, "G03": int, "H12": int, "H16": int, "N_iso": int})
     return df
 
-PATH = os.path.dirname(__file__) + "/" #: The absolute path of the prepackaged data directory
+PATH = Path(os.path.dirname(__file__)) #: The absolute path of the prepackaged data directory
 
 GASES = _read_radtrans_gas_id() #: The database of gas names and IDs used by NEMESIS
 

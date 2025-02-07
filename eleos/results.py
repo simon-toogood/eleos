@@ -7,6 +7,7 @@ import re
 import itertools
 import numpy as np
 from functools import wraps
+from pathlib import Path
 
 from . import profiles
 from . import utils
@@ -65,7 +66,7 @@ class NemesisResult:
         
         Args:
             core_directory: The directory of a single core"""
-        self.core_directory = core_directory
+        self.core_directory = Path(core_directory)
         self.core = cores.load_core(self.core_directory)
         self.profiles = self.core.profiles
         self._read_mre()
@@ -74,14 +75,14 @@ class NemesisResult:
         self.chi_sq = self.get_chi_sq()
   
     def _read_mre(self):
-        mre = parsers.NemesisMre(self.core_directory + "nemesis.mre")
+        mre = parsers.NemesisMre(self.core_directory / "nemesis.mre")
         self.__dict__ |= mre.__dict__
         for profile, df in zip(self.profiles, mre.retrieved_parameters):
             profile._add_result(df)
 
     def _read_aerosol_prf(self):
         header = ["height"] + [f"aerosol_{x}" for x in range(1, self.core.num_aerosol_modes+1)]
-        data = pd.read_table(self.core.directory+"aerosol.prf", sep="\s+", skiprows=2, names=header)
+        data = pd.read_table(self.core.directory / "aerosol.prf", sep="\s+", skiprows=2, names=header)
         data.insert(1, "pressure", self.core.ref.pressure)
         return data
 
@@ -95,7 +96,7 @@ class NemesisResult:
             pandas.DataFrame: A DataFrame containing the data from the .itr file with columns for each parameter"""
         
         # Reading the mre file to get the order of the parameters in the state vector
-        with open(self.core_directory + "nemesis.mre") as file:
+        with open(self.core_directory / "nemesis.mre") as file:
             lines = file.read().split("\n")
             toggle = False
             good = []
@@ -115,7 +116,7 @@ class NemesisResult:
             vec.columns = ["i", "ix", "xa", "sa_err", "xn", "xn_err"]
 
         # Reading the itr file and extracting state vector for each iteration and the prior vector
-        with open(self.core_directory + "nemesis.itr") as file:
+        with open(self.core_directory / "nemesis.itr") as file:
             # Get the prior state vector
             prior = [float(x) for x in file.readlines()[5].split()]
             exps = []
@@ -145,7 +146,7 @@ class NemesisResult:
         return data
 
     def _read_nemesis_prf(self):
-        with open(self.core_directory + "nemesis.prf") as file:
+        with open(self.core_directory / "nemesis.prf") as file:
             lines = file.read().split("\n")
         
         names = []
@@ -164,7 +165,7 @@ class NemesisResult:
                 gas_name = constants.GASES[constants.GASES.radtrans_id == gas_id].name.iloc[0]
                 names.append(f"{gas_name} {isotope_id}")
 
-        out = pd.read_table(self.core_directory+"nemesis.prf", skiprows=i+1, sep="\s+")
+        out = pd.read_table(self.core_directory / "nemesis.prf", skiprows=i+1, sep="\s+")
         out.columns = ["height", "pressure", "temp"] + names
 
         return out
@@ -175,7 +176,7 @@ class NemesisResult:
             pattern = "chisq/ny is equal to :    "
         else:
             pattern = "chisq/ny =    "
-        with open(self.core_directory+"nemesis.prc") as file:
+        with open(self.core_directory / "nemesis.prc") as file:
             lines = [line for line in file if pattern in line]
             values = [float(re.findall(r"[-+]?\d*\.\d+|\d+", line)[0]) for line in lines]  # Extract all floats
         if all_iterations:
@@ -194,7 +195,7 @@ class NemesisResult:
     @property
     def elapsed_time(self):
         """Return the time taken for the retrieval in hours"""
-        with open(self.core_directory+"nemesis.prc") as file:
+        with open(self.core_directory / "nemesis.prc") as file:
             lines = file.read().splitlines()
             time = float(re.findall(r"[-+]?\d*\.\d+|\d+", lines[-1])[0])
         return time / 3600
@@ -321,7 +322,16 @@ class NemesisResult:
 
     @plotting_altitude
     def plot_chemical_profiles(self, ax, pressure, gas_names=None):
-        """"""
+        """Plot chemical profiles from the .prf file.
+
+        Args:
+            ax (matplotlib.Axes): The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes.
+            pressure (bool): Whether to plot the chemical profiles against pressure (if True) or height (if False).
+            gas_names (list[str], optional): List of gas names to plot. If None, plot all gases.
+
+        Returns:
+            matplotlib.Figure: The Figure object to which the Axes belong
+            matplotlib.Axes: The Axes object onto which the data was plotted"""
         y = self.retrieved_chemicals["pressure"] if pressure else self.retrieved_chemicals["height"]
         
         if gas_names is None:
@@ -357,7 +367,7 @@ class NemesisResult:
         self.plot_aerosol_profiles(ax=axs["D"])
         self.plot_chemical_profiles(ax=axs["E"], gas_names=names)
 
-        fig.savefig(self.core_directory+"plots/summary.png", bbox_inches="tight", dpi=400)
+        fig.savefig(self.core_directory / "plots/summary.png", bbox_inches="tight", dpi=400)
 
         return fig, axs
 
@@ -386,11 +396,11 @@ class NemesisResult:
         
         fig.supxlabel('Iteration Number')
         fig.tight_layout()
-        fig.savefig("plots/iterations.png", bbox_inches="tight", dpi=400)
+        fig.savefig(self.core_directory / "plots/iterations.png", bbox_inches="tight", dpi=400)
         return fig, axs
 
     def savefig(self, name, **kwargs):
-        plt.savefig(self.core_directory + "plots/" + name, bbox_inches="tight", **kwargs)
+        plt.savefig(self.core_directory / "plots/" + name, bbox_inches="tight", **kwargs)
 
 
 def load_multiple_cores(parent_directory):
@@ -403,7 +413,7 @@ def load_multiple_cores(parent_directory):
         list[NemesisResult]: A list containing the result object for each core"""
     
     out = []
-    for core in sorted(glob.glob(parent_directory+"core_*/")):
+    for core in sorted(glob.glob(Path(parent_directory) / "core_*/")):
         out.append(NemesisResult(core))
     return out
 

@@ -4,6 +4,7 @@ import pandas as pd
 import pickle
 import time
 import warnings
+from pathlib import Path
 
 from . import constants
 from . import spx
@@ -59,7 +60,7 @@ class NemesisCore:
         self.id_ = CORE_ID_COUNTER
 
         # Assign attributes passed in
-        self.spx_file = spx_file
+        self.spx_file = Path(spx_file)
         self.profiles = profiles
         self.planet = planet.lower()
         self.scattering = scattering
@@ -74,17 +75,15 @@ class NemesisCore:
         self.cloud_cover = cloud_cover
 
         # Set the directories of the parent folder and own core
-        if not parent_directory.endswith("/"):
-            parent_directory += "/"
-        self.parent_directory = parent_directory
-        self.directory = parent_directory + f"core_{self.id_}/"
+        self.parent_directory = Path(parent_directory)
+        self.directory = parent_directory / f"core_{self.id_}"
 
         # Create the directory tree if it doesn't already exist and clear it if it does
         os.makedirs(self.parent_directory, exist_ok=True)
         if os.path.exists(self.directory) and prompt_if_exists:
-            if os.path.exists(self.directory + "nemesis.mre"):
+            if os.path.exists(self.directory / "nemesis.mre"):
                 msg = "There is already a core that has already been run in"
-            elif os.path.exists(self.directory + "nemesis.ref"):
+            elif os.path.exists(self.directory / "nemesis.ref"):
                 msg = "There is already a core that has not been run yet in"
             else:
                 msg = "There is already data in"
@@ -94,7 +93,7 @@ class NemesisCore:
                 return
             shutil.rmtree(self.directory)
         os.makedirs(self.directory)
-        os.mkdir(self.directory + "plots")
+        os.mkdir(self.directory / "plots")
 
         # Check if we are perfoming a scattering run with more than 39 layers (NEMESIS hates this...)
         if num_layers > 39 and self.scattering:
@@ -103,7 +102,7 @@ class NemesisCore:
 
         # Set ref file if not specified:
         if ref_file is None:
-            self.ref_file = constants.PATH + f"data/{planet}/{planet}.ref"
+            self.ref_file = constants.PATH / f"data/{planet}/{planet}.ref"
             warnings.warn(f"No ref file specified. Using the default in {self.ref_file}")
         else:
             self.ref_file = ref_file
@@ -113,8 +112,8 @@ class NemesisCore:
         self._copy_template_files()
 
         # Parse the ref file:
-        self.ref = parsers.NemesisRef(self.directory + "nemesis.ref")
-        print(self.ref.data)
+        self.ref = parsers.NemesisRef(self.directory / "nemesis.ref")
+
         # Set number of aerosol modes (incremented by add_aerosol_mode)
         self.num_aerosol_modes = 0
 
@@ -139,7 +138,7 @@ class NemesisCore:
         return f"<NemesisCore: {self.directory}>"
 
     def _save_core(self):
-        with open(self.directory+"core.pkl", mode="wb") as file:
+        with open(self.directory / "core.pkl", mode="wb") as file:
             pickle.dump(self, file)
 
     def _add_profile(self, profile):
@@ -159,15 +158,15 @@ class NemesisCore:
             nemesis.spx
             nemesis.ref"""
 
-        shutil.copy(self.ref_file, self.directory+"nemesis.ref")
-        shutil.copy(self.spx_file, self.directory+"nemesis.spx")
+        shutil.copy(self.ref_file, self.directory / "nemesis.ref")
+        shutil.copy(self.spx_file, self.directory / "nemesis.spx")
 
     def _copy_template_files(self):
-        shutil.copy(constants.PATH + "data/statics/nemesis.cia", self.directory)
-        shutil.copy(constants.PATH + "data/statics/nemesis.abo", self.directory)
-        shutil.copy(constants.PATH + "data/statics/nemesis.nam", self.directory)
-        shutil.copy(constants.PATH + "data/statics/nemesis.sol", self.directory)
-        shutil.copy(constants.PATH + "data/statics/makephase.inp", self.directory)
+        shutil.copy(constants.PATH / "data/statics/nemesis.cia", self.directory)
+        shutil.copy(constants.PATH / "data/statics/nemesis.abo", self.directory)
+        shutil.copy(constants.PATH / "data/statics/nemesis.nam", self.directory)
+        shutil.copy(constants.PATH / "data/statics/nemesis.sol", self.directory)
+        shutil.copy(constants.PATH / "data/statics/makephase.inp", self.directory)
 
     def _generate_inp(self):
         """Generate the nemesis input file
@@ -180,11 +179,11 @@ class NemesisCore:
             
         Creates:
             nemesis.inp"""
-        with open(constants.PATH+"data/statics/nemesis.inp") as file:
+        with open(constants.PATH / "data/statics/nemesis.inp") as file:
             out = file.read()
             out = out.replace("<SCATTERING>", str(int(self.scattering)))
             out = out.replace("<N_ITERATIONS>", str(self.num_iterations))
-        with open(self.directory+"nemesis.inp", mode="w+") as file:
+        with open(self.directory / "nemesis.inp", mode="w+") as file:
             file.write(out)
 
     def _generate_apr(self):
@@ -202,7 +201,7 @@ class NemesisCore:
         for profile in self.profiles:
             profile.shape.create_required_files(self.directory)
             out += profile.generate_apr_data() + "\n"
-        with open(self.directory + "nemesis.apr", mode="w") as file:
+        with open(self.directory / "nemesis.apr", mode="w") as file:
             file.write(out)
 
     def _generate_set(self):
@@ -217,14 +216,14 @@ class NemesisCore:
         Creates:
             nemesis.set"""
 
-        with open(constants.PATH+"data/statics/template.set", mode="r") as file:
+        with open(constants.PATH / "data/statics/template.set", mode="r") as file:
             out = file.read()
         out = out.replace("<DISTANCE>", f"{constants.DISTANCES[self.planet]:.3f}")
         out = out.replace("<SUNLIGHT>", f"{int(self.scattering)}")
         out = out.replace("<BOUNDARY>", f"{int(self.scattering)}")
         out = out.replace("<N_LAYERS>", f"{int(self.num_layers)}")
         out = out.replace("<BASE>", f"{self.bottom_layer_height:.2f}")
-        with open(self.directory+"nemesis.set", mode="w+") as file:
+        with open(self.directory / "nemesis.set", mode="w+") as file:
             file.write(out)
 
     def _generate_flags(self, inormal=0, iray=1, ih2o=0, ich4=0, io3=0, inh3=0, iptf=0, imie=0, iuv=0):
@@ -252,7 +251,7 @@ class NemesisCore:
         Creates:
             nemesis.fla"""
         
-        with open(self.directory+"nemesis.fla", mode="w+") as file:
+        with open(self.directory / "nemesis.fla", mode="w+") as file:
             file.write('       {aa}	! Inormal (0=eqm, 1=normal)\n       {bb}	! Iray (0=off, 1=on)\n       {cc}	! IH2O (1 = turn extra continuum on)\n       {dd}	! ICH4 (1 = turn extra continuum on)\n       {ee}	! IO3 (1 = turn extra continuum on)\n       {ff}	! INH3 (1 = turn extra continuum on)\n       {gg}	! Iptf (0=default, 1=CH4 High-T)\n       {hh}	! IMie\n       {ii}	! UV Cross-sections\n       0	! INLTE (0=LTE)'.format(aa=inormal, bb=iray, cc=ih2o, dd=ich4, ee=io3, ff=inh3, gg=iptf, hh=imie, ii=iuv))
 
     def _generate_aerosol_ref(self):
@@ -272,7 +271,7 @@ class NemesisCore:
             return
         
         heights = self.ref.data.height
-        with open(self.directory+"aerosol.ref", mode="w+") as file:
+        with open(self.directory / "aerosol.ref", mode="w+") as file:
             file.write(f"# Generated by Eleos\n")
             file.write(f"{len(heights)} {self.num_aerosol_modes}\n")
             for h in heights:
@@ -296,9 +295,9 @@ class NemesisCore:
             Add way to include/exclude different elements
             Add option to use ktables on ALICE rather than prepackaged"""
         if self.instrument == "NIRSPEC":
-            shutil.copy(constants.PATH+"data/jupiter/nirspec.kls", self.directory+"nemesis.kls")
+            shutil.copy(constants.PATH / "data/jupiter/nirspec.kls", self.directory+"nemesis.kls")
         elif self.instrument == "MIRI":
-            shutil.copy(constants.PATH+"data/jupiter/miri.kls", self.directory+"nemesis.kls")
+            shutil.copy(constants.PATH / "data/jupiter/miri.kls", self.directory+"nemesis.kls")
 
     def _generate_fmerror(self):
         """For each wavelength in the spx file, adjust the error by a factor (either fmerror_factor, _pct or _value) and write to the fmerror file. 
@@ -404,7 +403,7 @@ class NemesisCore:
         if self.num_aerosol_modes == 0:
             return 
         
-        with open(self.directory+"fcloud.ref", mode="w+") as file:
+        with open(self.directory / "fcloud.ref", mode="w+") as file:
             file.write(f"{len(self.ref.data)}    {self.num_aerosol_modes}\n")
             for height in self.ref.data.height:
                 file.write(f"      {height:> 9.4f}      {int(self.cloud_cover)}")
@@ -424,7 +423,7 @@ class NemesisCore:
             
         Creates:
             parah2.ref"""
-        df = pd.read_table(constants.PATH + f"data/{self.planet}/parah2.ref", skiprows=1, header=None, sep="\s+")
+        df = pd.read_table(constants.PATH / f"data/{self.planet}/parah2.ref", skiprows=1, header=None, sep="\s+")
         df.columns = ["height", "parah2"]
         minh, maxh = self.get_height_limits()
         df = df[(df.height >= minh) & (df.height <= maxh)]
@@ -492,7 +491,7 @@ class NemesisCore:
             refractive_index = refractive_index_profile.shape.refractive_index
 
         # Add the mode to the bottom of the Makephase input file
-        with open(self.directory+"makephase.inp", mode="a") as file:
+        with open(self.directory / "makephase.inp", mode="a") as file:
             file.write(f"1\n{radius} {variance}\n2\n1\n{refractive_index.real} {refractive_index.imag}\n")
 
     def generate_core(self):
@@ -567,7 +566,7 @@ def load_core(core_directory):
         
     Returns:
         NemesisCore: The unpickled core"""
-    with open(core_directory+"core.pkl", 'rb') as f:
+    with open(Path(core_directory) / "core.pkl", 'rb') as f:
         return pickle.load(f)
 
 
@@ -579,6 +578,7 @@ def reset_core_numbering():
         
     Returns:
         None"""
+    global CORE_ID_COUNTER
     CORE_ID_COUNTER = 0
 
 
@@ -596,6 +596,7 @@ def clear_parent_directory(parent_directory, prompt_if_exists=True):
     Returns:
         None"""
     
+    parent_directory = Path(parent_directory)
     if os.path.exists(parent_directory):
         if prompt_if_exists:
             x = input(f"{parent_directory} already exists - are you sure you want to erase and continue? Y/N")
@@ -608,11 +609,13 @@ def clear_parent_directory(parent_directory, prompt_if_exists=True):
             shutil.rmtree(parent_directory)
 
 
-def generate_alice_job(parent_directory, username, memory=16, hours=24):
+def generate_alice_job(parent_directory, python_env_name, username=None, memory=16, hours=24):
     """Generate an sbatch submission script for use on ALICE. The job is an array job over all the specified cores.
+    After running NEMESIS it will run Eleos to create some summary plots in the parent/core_N/plots directory
     
     Args:
-        parent_directory: The directory containing the NEMESIS core directories to be run
+        parent_directory (str): The directory containing the NEMESIS core directories to be run
+        python_env_name (str): The name of a conda environment which has Eleos installed
         username: The username of the user running the job (eg, scat2, lnf2)
         memory: The amount of memory to use (in GB)
         hours: The number of hours to schedule the job for
@@ -624,18 +627,19 @@ def generate_alice_job(parent_directory, username, memory=16, hours=24):
         submitjob.sh in the parent directory of the cores"""
 
 
-    script_path = parent_directory + "submitjob.sh"
+    script_path = Path(parent_directory) / "submitjob.sh"
 
-    ncores = len([f for f in os.listdir(parent_directory) if not os.path.isfile(parent_directory + f)])
+    ncores = len([f for f in os.listdir(parent_directory) if not os.path.isfile(parent_directory / f)])
 
     # Read the submission script and replace template fields
-    with open(constants.PATH+"data/statics/template.job", mode="r") as file:
+    with open(constants.PATH / "data/statics/template.job", mode="r") as file:
         out = file.read()
         out = out.replace("<MEMORY>", str(memory))
         out = out.replace("<HOURS>", f"{hours:02}")
         out = out.replace("<N_CORES>", str(ncores))
         out = out.replace("<CORE_DIR>", os.path.abspath(parent_directory))
-        out = out.replace("<USERNAME>", username)
+        out = out.replace("<USERNAME>", str(username))
+        out = out.replace("<PYTHON_ENV>", python_env_name)
 
     # Write the filled template 
     with open(script_path, mode="w+") as file:

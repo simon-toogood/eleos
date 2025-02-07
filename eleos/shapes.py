@@ -44,6 +44,7 @@ Class template::
 from dataclasses import dataclass
 from typing import ClassVar
 import shutil
+from pathlib import Path
 
 from . import spx, utils
 
@@ -279,17 +280,18 @@ analysis and then the Mie scattering properties of the particles calculated."""
         return f"cloudf{self.aerosol_id}.dat"
 
     def create_required_files(self, directory):
-         # Get first wavelength
-        wl = spx.read(directory+"nemesis.spx").geometries[0].wavelengths[0]
+        # Get first wavelength
+        directory = Path(directory)
+        wl = spx.read(directory / "nemesis.spx").geometries[0].wavelengths[0]
 
         # Get number of wavelengths in xsc file
-        with open(directory+"nemesis.xsc") as file:
+        with open(directory / "nemesis.xsc") as file:
             lines = file.read().split("\n")
             nwave = (len(lines)-2) // 2
             refwave = float(lines[1].split()[0])
         
         # Generate cloudfN.dat
-        with open(directory + f"cloudf{self.aerosol_id}.dat", mode="w+") as file:
+        with open(directory / f"cloudf{self.aerosol_id}.dat", mode="w+") as file:
             utils.write_nums(file, self.radius, self.radius_error)
             utils.write_nums(file, self.variance, self.variance_error)
             file.write(f"{nwave}    -1\n")
