@@ -39,7 +39,7 @@ where `parent_directory/` contains a set of cores for a retrieval, `core_N/` is 
 
 ## Core Generation Example (generate.py)
 
-This code generates 4 cores, each with a different forward modelling error factor. Scattering is off by default, so these consider only thermla emission from the planet. It retrieves the temeprature profile using a prior from a pre-loaded file (`tempapr.dat`), the ammonia profile represented as a knee pressure (model 1 in NEMESIS), and an aerosol layer represented as model 32. It then generates a submission script to run NEMESIS using those cores on ALICE.
+This code generates 4 cores, each with a different forward modelling error factor. Scattering is on by default, so these consider both thermal emission from the planet and reflected sunlight.
 
 ```python
 
@@ -131,6 +131,16 @@ plt.tight_layout()
 fig.savefig("example.png", dpi=500)
 ```
 
+
+## Command Line
+
+Eleos can be run at the command line in order to quickly generate summary plots and print a human-readable representation of the.mre file for a core directory using the command
+
+`python -m eleos --make-summary path/to/core/directory`
+
+At the moment, this only works for cores created by Eleos, as it requires the core.pkl file to be present which contains a serialisation of the NemesisCore object used to create the core. This allows very easy access to all the profiles, shapes, attributes etc… In the future, this restriction might be lifted.
+
+
 ## Limitations and future work
 
-Currently, this library only supports Jupiter (although expansion should be fairly easy when providing .ref files) and a single aerosol mode. In the future, these restrictions will be lifted once the basics of the library have been debugged and tested for both forward and retrieval modes.
+Currently, this library only supports Jupiter (although expansion should be fairly easy when providing .ref files), preset k-tables, and is not as flexible generally as using Nemesis directly. In the future, these will be relaxed once the basics of the library have been debugged and tested for both forward and retrieval modes. The advantage of Eleos is the ablilty to create hundreds of consistent cores through a standard interface, without relying on bespoke code to interface with NEMESIS.

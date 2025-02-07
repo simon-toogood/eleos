@@ -7,7 +7,7 @@ from pathlib import Path
 
 def _read_radtrans_gas_id():
     data = []
-    with open(PATH+"data/radtrans_ids.csv") as file:
+    with open(PATH / "data/radtrans_ids.csv") as file:
         for line in file:
             x = line.rstrip("\n").split(",")
             data.append(x[:7] + [x[7:],])

@@ -9,3 +9,7 @@ if sys.argv[1] == "--make-summary":
     res.make_summary_plot()
     res.make_iterations_plot()
     print("Done!")
+
+else:
+    raise ValueError("Argument not recognised!")
+    

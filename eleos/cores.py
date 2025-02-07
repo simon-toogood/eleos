@@ -30,7 +30,7 @@ class NemesisCore:
                  num_layers=120, 
                  bottom_layer_height=-80, 
                  instrument="NIRSPEC", 
-                 fmerror_factor=1,
+                 fmerror_factor=0,
                  fmerror_pct=None,
                  fmerror_value=None,
                  cloud_cover=1.0):
@@ -76,7 +76,7 @@ class NemesisCore:
 
         # Set the directories of the parent folder and own core
         self.parent_directory = Path(parent_directory)
-        self.directory = parent_directory / f"core_{self.id_}"
+        self.directory = self.parent_directory / f"core_{self.id_}"
 
         # Create the directory tree if it doesn't already exist and clear it if it does
         os.makedirs(self.parent_directory, exist_ok=True)
@@ -295,9 +295,9 @@ class NemesisCore:
             Add way to include/exclude different elements
             Add option to use ktables on ALICE rather than prepackaged"""
         if self.instrument == "NIRSPEC":
-            shutil.copy(constants.PATH / "data/jupiter/nirspec.kls", self.directory+"nemesis.kls")
+            shutil.copy(constants.PATH / "data/jupiter/nirspec.kls", self.directory / "nemesis.kls")
         elif self.instrument == "MIRI":
-            shutil.copy(constants.PATH / "data/jupiter/miri.kls", self.directory+"nemesis.kls")
+            shutil.copy(constants.PATH / "data/jupiter/miri.kls", self.directory / "nemesis.kls")
 
     def _generate_fmerror(self):
         """For each wavelength in the spx file, adjust the error by a factor (either fmerror_factor, _pct or _value) and write to the fmerror file. 
@@ -316,7 +316,7 @@ class NemesisCore:
         if num_entries > 2048:
             raise IndexError(f"spx file has too many wavelengths! ({num_entries}/2048)")
         
-        with open(self.directory + "fmerror.dat", mode="w+") as file:
+        with open(self.directory / "fmerror.dat", mode="w+") as file:
             # Header with number of lines 
             file.write(f"{num_entries+2}\n")
 
@@ -368,7 +368,7 @@ class NemesisCore:
         end_wl = max(wls) + 0.1
 
         # Replace the number of aerosol modes and start/end/delta wavelengths
-        with open(self.directory+"makephase.inp", mode="r+") as file:
+        with open(self.directory / "makephase.inp", mode="r+") as file:
             lines = file.read().split("\n")
             lines[0] = str(self.num_aerosol_modes)
             lines[2] = f"{start_wl} {end_wl} 0.1"
@@ -377,7 +377,7 @@ class NemesisCore:
             file.truncate()
 
         # Generate the normxsc.inp file
-        with open(self.directory+"normxsc.inp", mode="w+") as file:
+        with open(self.directory / "normxsc.inp", mode="w+") as file:
             file.write(f"nemesis.xsc\n1 1")
 
         # Run Makephase and Normxsc
@@ -427,7 +427,7 @@ class NemesisCore:
         df.columns = ["height", "parah2"]
         minh, maxh = self.get_height_limits()
         df = df[(df.height >= minh) & (df.height <= maxh)]
-        with open(self.directory + "parah2.ref", mode="w+") as file:
+        with open(self.directory / "parah2.ref", mode="w+") as file:
             file.write(str(len(df)) + "\n")
             file.write(df.to_string(header=False, index=False))
 
@@ -567,7 +567,13 @@ def load_core(core_directory):
     Returns:
         NemesisCore: The unpickled core"""
     with open(Path(core_directory) / "core.pkl", 'rb') as f:
-        return pickle.load(f)
+        core = pickle.load(f)
+
+    # Refresh the directory attributes in the NemesisCore object in case the folder has been moved
+    core.parent_directory = (core_directory / "..").resolve()
+    core.directory = core_directory.resolve()
+
+    return core
 
 
 def reset_core_numbering():
@@ -626,8 +632,8 @@ def generate_alice_job(parent_directory, python_env_name, username=None, memory=
     Creates:
         submitjob.sh in the parent directory of the cores"""
 
-
-    script_path = Path(parent_directory) / "submitjob.sh"
+    parent_directory = Path(parent_directory)
+    script_path = parent_directory / "submitjob.sh"
 
     ncores = len([f for f in os.listdir(parent_directory) if not os.path.isfile(parent_directory / f)])
 
