@@ -109,21 +109,19 @@ def write(
     """
     if data is None:
         data = construct_spx(**kwargs)
-    else:
-        spectrum=convert_MJysr_to_Wcm2srum(spectrum),
-        error=convert_MJysr_to_Wcm2srum(error)
 
     lines: list[str] = []
     ngeom = len(data.geometries)
     lines.append(f'{data.fwhm}\t{data.lat}\t{data.lon}\t{ngeom}')
     for g in data.geometries:
-        nconv = len(g.wavelengths)
+        mask = ~(np.isnan(g.spectrum) | np.isnan(g.error))
+        nconv = len(g.wavelengths[mask])
         lines.append(f'{nconv}')
         lines.append(f'{g.nav}')
         lines.append(
             f'{g.lat}\t{g.lon}\t{g.phase}\t{g.emission}\t{g.azimuth}\t{g.wgeom}'
         )
-        for w, s, e in zip(g.wavelengths, g.spectrum, g.error):
+        for w, s, e in zip(g.wavelengths[mask], g.spectrum[mask], g.error[mask]):
             lines.append(f'{w}\t{s}\t{e}')
     lines.append('')  # end file with a newline
     with open(path, 'w') as f:
@@ -145,9 +143,7 @@ def construct_spx(
     """
     Construct an SpxFileData object from the given data.
 
-    The units should be W/cm2/sr/micron - you can use the `convert_MJysr_to_Wcm2srum`
-    function to convert from MJy/sr to W/cm2/sr/micron before passing the spectrum
-    and error arrays to this function if necessary.
+    The units should be MJy/sr - the unit conversion is done automatically.
     """
     return SpxFileData(
         fwhm=fwhm,
@@ -163,8 +159,8 @@ def construct_spx(
                 azimuth=azimuth,
                 wgeom=1,
                 wavelengths=wavelengths,
-                spectrum=spectrum,
-                error=error,
+                spectrum=convert_MJysr_to_Wcm2srum(wavelengths, spectrum),
+                error=convert_MJysr_to_Wcm2srum(wavelengths, error),
             ),
         ),
     )

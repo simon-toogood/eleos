@@ -15,6 +15,6 @@
 *********************************************************
  Alt. at base of bot.layer (not limb) :      <BASE>
  Number of atm layers :           <N_LAYERS>
- Layer type :         1
+ Layer type :         <LAYER_TYPE>
  Layer integration :  1				   
 *********************************************************

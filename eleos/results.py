@@ -59,7 +59,7 @@ class NemesisResult:
         chi_sq (float):                         The chi-squared value of the retrieval
         retrieved_spectrum (pandas.DataFrame):  A DataFrame containing the measured and modelled spectrum
         retrieved_aerosols (pandas.DataFrame):  A DataFrame containing the retrieved aerosol profiles
-        retrieved_chemicals (pandas.DataFrame): A DataFrame containing the retrieved chemical profiles
+        retrieved_gases (pandas.DataFrame): A DataFrame containing the retrieved chemical profiles
 """
     def __init__(self, core_directory):
         """Inititalise a NemesisResult class
@@ -71,7 +71,7 @@ class NemesisResult:
         self.profiles = self.core.profiles
         self._read_mre()
         self.retrieved_aerosols = self._read_aerosol_prf()
-        self.retrieved_chemicals = self._read_nemesis_prf()
+        self.retrieved_gases = self._read_nemesis_prf()
         self.chi_sq = self.get_chi_sq()
   
     def _read_mre(self):
@@ -83,7 +83,7 @@ class NemesisResult:
     def _read_aerosol_prf(self):
         header = ["height"] + [f"aerosol_{x}" for x in range(1, self.core.num_aerosol_modes+1)]
         data = pd.read_table(self.core.directory / "aerosol.prf", sep="\s+", skiprows=2, names=header)
-        data.insert(1, "pressure", self.core.ref.pressure)
+        data.insert(1, "pressure", self.core.ref.data.pressure)
         return data
 
     def _read_itr(self):
@@ -321,23 +321,30 @@ class NemesisResult:
         ax.legend()
 
     @plotting_altitude
-    def plot_chemical_profiles(self, ax, pressure, gas_names=None):
-        """Plot chemical profiles from the .prf file.
+    def plot_gas_profiles(self, ax, pressure, gas_names=None, include_priors=False):
+        """Plot gas profiles from the .prf file.
 
         Args:
             ax (matplotlib.Axes): The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes.
-            pressure (bool): Whether to plot the chemical profiles against pressure (if True) or height (if False).
+            pressure (bool): Whether to plot the gas profiles against pressure (if True) or height (if False).
             gas_names (list[str], optional): List of gas names to plot. If None, plot all gases.
-
+            include_priors (bool): Whether to plot the prior as well as the retrieved gas profiles
+        
         Returns:
             matplotlib.Figure: The Figure object to which the Axes belong
             matplotlib.Axes: The Axes object onto which the data was plotted"""
-        y = self.retrieved_chemicals["pressure"] if pressure else self.retrieved_chemicals["height"]
+        
+        y = self.retrieved_gases["pressure"] if pressure else self.retrieved_gases["height"]
+        y2 = self.core.ref.data["pressure"] if pressure else self.core.ref.data["height"]
         
         if gas_names is None:
-            gas_names = [x for x in self.retrieved_chemicals.columns if x not in ("height", "pressure", "temp")]
-        for gas_name in gas_names:
-            ax.plot(self.retrieved_chemicals[gas_name], y, label=gas_name)
+            gas_names = [x for x in self.retrieved_gases.columns if x not in ("height", "pressure", "temp")]
+        
+        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+        for i, gas_name in enumerate(gas_names):
+            ax.plot(self.retrieved_gases[gas_name], y, label=gas_name, c=colors[i])
+            if include_priors:
+                ax.plot(self.core.ref.data[gas_name], y2, label=f"{gas_name} Prior", c=colors[i])
         
         ax.set_xscale("log")
         ax.set_xlabel("Volume Mixing Ratio")
@@ -365,7 +372,7 @@ class NemesisResult:
         self.plot_spectrum_residuals(ax=axs["B"])
         self.plot_chisq(ax=axs["C"])
         self.plot_aerosol_profiles(ax=axs["D"])
-        self.plot_chemical_profiles(ax=axs["E"], gas_names=names)
+        self.plot_gas_profiles(ax=axs["E"], gas_names=names)
 
         fig.savefig(self.core_directory / "plots/summary.png", bbox_inches="tight", dpi=400)
 
@@ -399,22 +406,41 @@ class NemesisResult:
         fig.savefig(self.core_directory / "plots/iterations.png", bbox_inches="tight", dpi=400)
         return fig, axs
 
-    def savefig(self, name, **kwargs):
-        plt.savefig(self.core_directory / "plots/" + name, bbox_inches="tight", **kwargs)
+    def savefig(self, name, fig=None, **kwargs):
+        """
+        Save a matplotlib figure to a file in the core's `plots` directory.
+
+        Args:
+            name (str): The name of the file to save the figure as.
+            fig (matplotlib.Figure, optional): The figure to save. If None, the current figure will be saved. Default is None.
+            **kwargs: Additional keyword arguments to pass to `savefig`.
+
+        Returns:
+            None
+        """
+        x = plt if fig is None else fig
+        x.savefig(self.core_directory / "plots/" + name, bbox_inches="tight", **kwargs)
 
 
-def load_multiple_cores(parent_directory):
+def load_multiple_cores(parent_directory, raise_errors=True):
     """Read in all the cores in a given directory and return a list of NemesisResult objects.
     
     Args:
         parent_directory (str): The directory containing all the individual core directories
+        raise_errors (bool): Whether to raise an error if a retieval failed (True) or to silently skip it (False) 
         
     Returns:
         list[NemesisResult]: A list containing the result object for each core"""
     
+    parent_directory = Path(parent_directory)
+
     out = []
-    for core in sorted(glob.glob(Path(parent_directory) / "core_*/")):
-        out.append(NemesisResult(core))
+    for core in sorted(parent_directory.glob("core_*")):
+        try:
+            out.append(NemesisResult(core))
+        except Exception as e:
+            if raise_errors:
+                raise e
     return out
 
 

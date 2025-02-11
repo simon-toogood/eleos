@@ -185,7 +185,7 @@ class GasProfile(Profile):
         self.label = self.gas_name
 
     def __repr__(self):
-        return f"<GasProfile {self.gas_name} [{self.create_nemesis_code()}]>"
+        return f"<GasProfile {self.gas_name} [{self.create_nemesis_string()}]>"
 
     def _create_profile_from_previous_retrieval(prev_profile):
         return GasProfile(gas_name=prev_profile.gas_name, isotope_id=prev_profile.isotope_id, shape=prev_profile.shape, label=prev_profile.label)
@@ -212,7 +212,7 @@ class GasProfile(Profile):
 
     def get_name(self):
         if self.label is None:
-            return self.gas_name
+            return f"{self.gas_name} {self.isotope_id}"
         else:
             return self.label
 
@@ -228,7 +228,7 @@ class AerosolProfile(Profile):
         self.shape = shape
 
     def __repr__(self):
-        return f"<AerosolProfile {self.aerosol_id} [{self.create_nemesis_code()}]>"
+        return f"<AerosolProfile {self.aerosol_id} [{self.create_nemesis_string()}]>"
 
     def _create_profile_from_previous_retrieval(prev_profile):
         return AerosolProfile(label=prev_profile.label, shape=prev_profile.shape)

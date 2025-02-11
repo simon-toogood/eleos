@@ -3,8 +3,11 @@ import shutil
 import pandas as pd
 import pickle
 import time
-import warnings
 from pathlib import Path
+import numpy as np
+
+import warnings
+warnings.formatwarning = lambda msg, *_: f"{msg}\n"
 
 from . import constants
 from . import spx
@@ -16,7 +19,7 @@ CORE_ID_COUNTER = 0
 
 
 class NemesisCore:
-
+    """The class that constructs a core directory and all the required files for NEMESIS to run."""
     def __init__(self, 
                  parent_directory,
                  spx_file, 
@@ -28,12 +31,13 @@ class NemesisCore:
                  prompt_if_exists=True, 
                  num_iterations=30,
                  num_layers=120, 
-                 bottom_layer_height=-80, 
+                 bottom_layer_height=None, 
                  instrument="NIRSPEC", 
                  fmerror_factor=0,
                  fmerror_pct=None,
                  fmerror_value=None,
                  cloud_cover=1.0):
+        
         """Create a NEMESIS core directory with a given set of profiles to retrieve
         
         Args:
@@ -67,7 +71,6 @@ class NemesisCore:
         self.forward = forward
         self.num_iterations = num_iterations
         self.num_layers = num_layers
-        self.bottom_layer_height = bottom_layer_height # this may need to be changed - does chopping bits out of the ref file affect the base height in .set file?
         self.instrument = instrument
         self.fmerror_factor = fmerror_factor
         self.fmerror_pct = fmerror_pct
@@ -100,6 +103,9 @@ class NemesisCore:
             warnings.warn(f"Too many atmospheric layers specified for a scattering run ({num_layers} vs. 39). Automatically reducing to 39")
             self.num_layers = 39
 
+        # Set layer type (by default this is 1 - equal log pressure grid)
+        self.layer_type = 1
+
         # Set ref file if not specified:
         if ref_file is None:
             self.ref_file = constants.PATH / f"data/{planet}/{planet}.ref"
@@ -113,6 +119,12 @@ class NemesisCore:
 
         # Parse the ref file:
         self.ref = parsers.NemesisRef(self.directory / "nemesis.ref")
+
+        # Set bottom layer height if not defined
+        if bottom_layer_height is None:
+            self.bottom_layer_height = self.ref.data.iloc[0].height
+        else:
+            self.bottom_layer_height = bottom_layer_height
 
         # Set number of aerosol modes (incremented by add_aerosol_mode)
         self.num_aerosol_modes = 0
@@ -216,13 +228,14 @@ class NemesisCore:
         Creates:
             nemesis.set"""
 
-        with open(constants.PATH / "data/statics/template.set", mode="r") as file:
+        with open(constants.PATH / "data/statics/nemesis.set", mode="r") as file:
             out = file.read()
         out = out.replace("<DISTANCE>", f"{constants.DISTANCES[self.planet]:.3f}")
         out = out.replace("<SUNLIGHT>", f"{int(self.scattering)}")
         out = out.replace("<BOUNDARY>", f"{int(self.scattering)}")
         out = out.replace("<N_LAYERS>", f"{int(self.num_layers)}")
         out = out.replace("<BASE>", f"{self.bottom_layer_height:.2f}")
+        out = out.replace("<LAYER_TYPE>", str(self.layer_type))
         with open(self.directory / "nemesis.set", mode="w+") as file:
             file.write(out)
 
@@ -534,17 +547,15 @@ class NemesisCore:
         return min(heights), max(heights)
 
     def set_pressure_limits(self, min_pressure=None, max_pressure=None):
-        """Set the limits of the atmosphere model in units of bar
-        
-        Args:
-            min_pressure: The pressure above which to cut off
-            max_pressure: The pressure below which to cut off
-            
-        Returns:
-            None"""
-        
-        self.ref.set_pressure_limits(min_pressure, max_pressure)
-        self.ref.write()
+        self.layer_type = 4
+        pressures = np.logspace(np.log10(max_pressure), 
+                                np.log10(min_pressure), 
+                                self.num_layers)
+        with open(self.directory / "pressure.lay", mode="w+") as file:
+            file.write("Created by Eleos\n")
+            file.write(str(self.num_layers) + "\n")
+            for p in pressures:
+                file.write(str(p) + "\n")
 
 
 class FixedPeak:
@@ -643,7 +654,7 @@ def generate_alice_job(parent_directory, python_env_name, username=None, memory=
         out = out.replace("<MEMORY>", str(memory))
         out = out.replace("<HOURS>", f"{hours:02}")
         out = out.replace("<N_CORES>", str(ncores))
-        out = out.replace("<CORE_DIR>", os.path.abspath(parent_directory))
+        out = out.replace("<CORE_DIR>", str(parent_directory.resolve()))
         out = out.replace("<USERNAME>", str(username))
         out = out.replace("<PYTHON_ENV>", python_env_name)
 

@@ -78,11 +78,11 @@ def remove_nonlte_emission(spectra, wavelengths, h3p_threshold=0.1, ch4_threshol
         spectra (np.ndarray): The trimmed spectra
         wavelengths (np.ndarray): The trimmed wavelengths"""
     
-    if wavelengths[0] - 2.87 > 1e-3 or wavelengths[-1] - 5.27 > 1e-3:
-        raise NotImplementedError("Non-LTE subtraction only works for G365H data.")
+    if not (2.8 < wavelengths[0] < 5.3 and 2.8 < wavelengths[-1] < 5.3):
+        raise NotImplementedError("Non-LTE subtraction only works for G365H data at the moment.")
     
-    h3p = pd.read_csv(constants.PATH + "data/misc/H3p_G395H_model.txt", sep=" ", names=["wavelengths", "spectrum"])
-    ch4 = pd.read_csv(constants.PATH + "data/misc/CH4_G395H_model.txt", sep=" ", names=["wavelengths", "spectrum"])
+    h3p = pd.read_csv(constants.PATH / "data/misc/H3p_G395H_model.txt", sep=" ", names=["wavelengths", "spectrum"])
+    ch4 = pd.read_csv(constants.PATH / "data/misc/CH4_G395H_model.txt", sep=" ", names=["wavelengths", "spectrum"])
 
     mask = []
     for w in wavelengths:

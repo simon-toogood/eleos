@@ -9,6 +9,8 @@
 #SBATCH --export=NONE
 #SBATCH --cpus-per-task=1
 #SBATCH --array=[1-<N_CORES>]
+#SBATCH --output=<CORE_DIR>/slurm-%j.out
+#SBATCH --error=<CORE_DIR>/slurm-%j.err
 
 source ~/.bashrc
 conda activate <PYTHON_ENV>
