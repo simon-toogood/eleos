@@ -5,13 +5,15 @@ import pickle
 import time
 from pathlib import Path
 import numpy as np
+import sys
 
 import warnings
-warnings.formatwarning = lambda msg, *_: f"{msg}\n"
+warnings.formatwarning = lambda msg, *_: f"Warning: {msg}\n"
 
 from . import constants
 from . import spx
 from . import parsers
+from . import utils
 from . import profiles as profiles_ # to avoid namespace shadowing by NemesisCore.profiles
 
 
@@ -32,31 +34,33 @@ class NemesisCore:
                  num_iterations=30,
                  num_layers=120, 
                  bottom_layer_height=None, 
-                 instrument="NIRSPEC", 
+                 instrument_ktables="NIRSPEC", 
                  fmerror_factor=0,
                  fmerror_pct=None,
                  fmerror_value=None,
-                 cloud_cover=1.0):
+                 cloud_cover=1.0,
+                 reference_wavelength=None):
         
         """Create a NEMESIS core directory with a given set of profiles to retrieve
         
         Args:
-            parent_directory (str):    The directory in which to create the core folder 
-            spx_file (str):            Path to the spectrum file to fit
-            ref_file (str):            Path to the ref file to use (if left blank it will use the default for that planet)
-            profiles List[str]:        List of profiles.Profile objects to retrieve
-            planet (str):              Name of the planet being observed. Must be one of 'jupiter', 'saturn', 'uranus', 'neptune' or 'titan'.
-            scattering (bool):         Whether to run a scattering retrieval or not
-            forward (bool):            Whether of not to run a forward model (ie. set number of iterations = 0)
-            prompt_if_exists (bool):   If the core directory already exists, then ask before continuing
-            num_iterations (int):      Number of iterations to run in the retrieval (if forward is set this has no effect)
-            num_layers (int):          The number of atmospheric layers to simulate
-            bottom_layer_height (int): The height in km of the bottom layer of the atmosphere
-            instrument (str):          Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use
-            fmerror_factor (float):    The factor by which to multiply the error on the spectrum (see also, fmerror_pct and fmerror_value)
-            fmerror_pct (float):       If given, instead of using fmerror_factor or fmerror_value, use a flat percentage of the brightness (eg. 0.1 = 10%) (see also, fmerror_factor and fmerror_value)
-            fmerror_value (float):     If given, instead of using fmerror_factor or fmerror_pct, use a flat value in W/cm2/sr/um (see also, fmerror_factor and fmerror_pct)
-            cloud_cover (bool):        If scattering mode is on, then this is the fractional cloud cover between 0 and 1 (usually doesn't need to be changed)
+            parent_directory (str):       The directory in which to create the core folder 
+            spx_file (str):               Path to the spectrum file to fit
+            ref_file (str):               Path to the ref file to use (if left blank it will use the default for that planet)
+            profiles List[str]:           List of profiles.Profile objects to retrieve
+            planet (str):                 Name of the planet being observed. Must be one of 'jupiter', 'saturn', 'uranus', 'neptune' or 'titan'.
+            scattering (bool):            Whether to run a scattering retrieval or not
+            forward (bool):               Whether of not to run a forward model (ie. set number of iterations = 0)
+            prompt_if_exists (bool):      If the core directory already exists, then ask before continuing
+            num_iterations (int):         Number of iterations to run in the retrieval (if forward is set this has no effect)
+            num_layers (int):             The number of atmospheric layers to simulate
+            bottom_layer_height (int):    The height in km of the bottom of the atmosphere (by defauylt use the lowest height in the .ref file)
+            instrument_ktables (str):     Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use
+            fmerror_factor (float):       The factor by which to multiply the error on the spectrum (see also, fmerror_pct and fmerror_value)
+            fmerror_pct (float):          If given, instead of using fmerror_factor or fmerror_value, use a flat percentage of the brightness (eg. 0.1 = 10%) (see also, fmerror_factor and fmerror_value)
+            fmerror_value (float):        If given, instead of using fmerror_factor or fmerror_pct, use a flat value in W/cm2/sr/um (see also, fmerror_factor and fmerror_pct)
+            cloud_cover (bool):           If scattering mode is on, then this is the fractional cloud cover between 0 and 1 (usually doesn't need to be changed)
+            reference_wavelength (float): If scattering mode is on, then normalise the cross-sections at this wavelength.
         """
         # Increment the global core counter and store local version
         global CORE_ID_COUNTER
@@ -64,21 +68,22 @@ class NemesisCore:
         self.id_ = CORE_ID_COUNTER
 
         # Assign attributes passed in
-        self.spx_file = Path(spx_file)
+        self.spx_file = Path(spx_file).resolve()
         self.profiles = profiles
         self.planet = planet.lower()
         self.scattering = scattering
         self.forward = forward
         self.num_iterations = num_iterations
         self.num_layers = num_layers
-        self.instrument = instrument
+        self.instrument_ktables = instrument_ktables
         self.fmerror_factor = fmerror_factor
         self.fmerror_pct = fmerror_pct
         self.fmerror_value = fmerror_value
         self.cloud_cover = cloud_cover
+        self.reference_wavelength = reference_wavelength
 
         # Set the directories of the parent folder and own core
-        self.parent_directory = Path(parent_directory)
+        self.parent_directory = Path(parent_directory).resolve()
         self.directory = self.parent_directory / f"core_{self.id_}"
 
         # Create the directory tree if it doesn't already exist and clear it if it does
@@ -103,9 +108,6 @@ class NemesisCore:
             warnings.warn(f"Too many atmospheric layers specified for a scattering run ({num_layers} vs. 39). Automatically reducing to 39")
             self.num_layers = 39
 
-        # Set layer type (by default this is 1 - equal log pressure grid)
-        self.layer_type = 1
-
         # Set ref file if not specified:
         if ref_file is None:
             self.ref_file = constants.PATH / f"data/{planet}/{planet}.ref"
@@ -125,6 +127,11 @@ class NemesisCore:
             self.bottom_layer_height = self.ref.data.iloc[0].height
         else:
             self.bottom_layer_height = bottom_layer_height
+
+        # Set layer type (by default this is 1 - equal log pressure grid)
+        self.layer_type = 1
+        self.min_pressure = self.ref.data.iloc[-1].pressure
+        self.max_pressure = self.ref.data.iloc[0].pressure
 
         # Set number of aerosol modes (incremented by add_aerosol_mode)
         self.num_aerosol_modes = 0
@@ -158,7 +165,7 @@ class NemesisCore:
         self.profiles.append(profile)
 
     def _copy_input_files(self):
-        """Copy the given .spx and .ref file into the core
+        """Copy the given .spx and .ref file into the core, as well as the eleos generation script itself
         
         Args:
             None
@@ -168,10 +175,12 @@ class NemesisCore:
             
         Creates:
             nemesis.spx
-            nemesis.ref"""
+            nemesis.ref
+            eleos_generation.py"""
 
         shutil.copy(self.ref_file, self.directory / "nemesis.ref")
         shutil.copy(self.spx_file, self.directory / "nemesis.spx")
+        shutil.copy(sys.argv[0], self.directory / "eleos_generation.py")
 
     def _copy_template_files(self):
         shutil.copy(constants.PATH / "data/statics/nemesis.cia", self.directory)
@@ -307,9 +316,9 @@ class NemesisCore:
         TODO:
             Add way to include/exclude different elements
             Add option to use ktables on ALICE rather than prepackaged"""
-        if self.instrument == "NIRSPEC":
+        if self.instrument_ktables == "NIRSPEC":
             shutil.copy(constants.PATH / "data/jupiter/nirspec.kls", self.directory / "nemesis.kls")
-        elif self.instrument == "MIRI":
+        elif self.instrument_ktables == "MIRI":
             shutil.copy(constants.PATH / "data/jupiter/miri.kls", self.directory / "nemesis.kls")
 
     def _generate_fmerror(self):
@@ -379,6 +388,12 @@ class NemesisCore:
         wls = spx.read(self.spx_file).geometries[0].wavelengths
         start_wl = min(wls) - 0.1
         end_wl = max(wls) + 0.1
+        if self.reference_wavelength is not None:
+            ref_wl_idx, _ = utils.find_nearest(wls, self.reference_wavelength)
+        else:
+            ref_wl_idx = 0
+            self.reference_wavelength = start_wl
+            warnings.warn(f"No reference wavelength for aerosol cross-sections specified - using the shortest wavelength ({start_wl:4f}um)")
 
         # Replace the number of aerosol modes and start/end/delta wavelengths
         with open(self.directory / "makephase.inp", mode="r+") as file:
@@ -391,7 +406,7 @@ class NemesisCore:
 
         # Generate the normxsc.inp file
         with open(self.directory / "normxsc.inp", mode="w+") as file:
-            file.write(f"nemesis.xsc\n1 1")
+            file.write(f"nemesis.xsc\n{ref_wl_idx + 1} 1")
 
         # Run Makephase and Normxsc
         cwd = os.getcwd()
@@ -443,6 +458,31 @@ class NemesisCore:
         with open(self.directory / "parah2.ref", mode="w+") as file:
             file.write(str(len(df)) + "\n")
             file.write(df.to_string(header=False, index=False))
+
+    def _generate_summary(self):
+        """Dump the information used to create the NEMESIS core to a human-readable text file
+        
+        Args:
+            None
+            
+        Returns:
+            None
+            
+        Creates:
+            eleos_inputs.txt"""
+        out = ""
+        for k, v in self.__dict__.items():
+            if k == "profiles":
+                out += "profiles:"
+                for p in v:
+                    out += utils.indent(p.__repr__(), level=1)
+                    out += utils.indent(p.compact_str(), level=2)
+            else:
+                out += f"{k}: {v}"
+            out += "\n"
+
+        with open(self.directory / "eleos_inputs.txt", mode="w+") as file:
+            file.write(out)
 
     def get_aerosol_mode(self, id=None, label=None):
         """Given an aerosol ID (positive, as used by NEMESIS), or an eleos label, return the corresponding AerosolProfile object.
@@ -528,6 +568,7 @@ class NemesisCore:
         self._generate_fcloud_ref()
         self._generate_xsc()
         self._generate_apr()
+        self._generate_summary()
         self._save_core()        
 
     def fix_peak(self, central_wavelength, width, error=1e-15):
@@ -548,6 +589,8 @@ class NemesisCore:
 
     def set_pressure_limits(self, min_pressure=None, max_pressure=None):
         self.layer_type = 4
+        self.min_pressure = min_pressure
+        self.max_pressure = max_pressure
         pressures = np.logspace(np.log10(max_pressure), 
                                 np.log10(min_pressure), 
                                 self.num_layers)
@@ -564,6 +607,9 @@ class FixedPeak:
         self.central_wavelength = central_wavelength
         self.width = width
         self.error = error
+
+    def __str__(self):
+        return f"<FixedPeak at {self.central_wavelength}±{self.width/2:.4f}um>"
 
     def isin(self, wl):
         return (wl > self.central_wavelength - self.width/2) & (wl < self.central_wavelength + self.width/2)

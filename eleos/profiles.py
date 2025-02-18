@@ -46,6 +46,20 @@ class Profile:
     
         return utils.generate_ascii_table(self.get_name(), headers, self.shape.NAMES, values)
 
+    def compact_str(self):
+        out = f"ID: {self.shape.ID}\n"
+        for k, v in self.__dict__.items():
+            if k == "shape":
+                for name in self.shape.NAMES:
+                    out += f"{name}: {getattr(self.shape, name)}±{getattr(self.shape, f'{name}_error')}\n"
+                    if self.retrieved:
+                        f"{getattr(self.shape, f'retrieved_{name}')}±{getattr(self.shape, f'retrieved_{name}_error')}\n"
+            elif k in ("core", "retrieved", "shape"):
+                pass
+            else:
+                out += f"{k}: {v}\n"
+        return out.rstrip("\n")
+
     @classmethod
     def from_previous_retrieval(cls, core_directory, label=None):
         """Create a Profile object using the retrieved parameters from a previous retrieval as priors. Use either id or label to specify the profile to use in the previous retrieval.
@@ -107,7 +121,6 @@ class Profile:
             for attr in [f"retrieved_{name}", f"retrieved_{name}_error"]:
                 delattr(self.shape, attr)
         self.retrieved = False
-
 
 
 class TemperatureProfile(Profile):
@@ -276,7 +289,7 @@ class ImagRefractiveIndexProfile(Profile):
         self.shape = shape
 
     def __repr__(self):
-        return f"<ImagRefractiveIndexProfile [{self.create_nemesis_string()}]>"
+        return f"<ImagRefractiveIndexProfile {self.aerosol_id} [{self.create_nemesis_string()}]>"
 
     def _create_profile_from_previous_retrieval(prev_profile):
         return ImagRefractiveIndexProfile(label=prev_profile.label, shape=prev_profile.shape)

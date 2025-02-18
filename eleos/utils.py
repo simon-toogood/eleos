@@ -51,7 +51,7 @@ def indent(string, level=1, spaces_per_level=4):
     Returns:
         str: The indented string
     """
-    lines = string.split("\n")
+    lines = str(string).split("\n")
     ind = " "*spaces_per_level*level
     return "\n".join([ind+l for l in lines])
 

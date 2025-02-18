@@ -1,8 +1,6 @@
-import io
-import itertools as it
 import pandas as pd
 import matplotlib.pyplot as plt
-import glob
+import shutil
 import re
 import itertools
 import numpy as np
@@ -38,6 +36,7 @@ def plotting_altitude(func):
         if pressure:
             ax.set_yscale("log")
             ax.set_ylabel("Pressure (bar)")
+            ax.set_ylim(self.core.min_pressure, self.core.max_pressure)
             ax.invert_yaxis()
         else:
             ax.set_ylabel("Height (km)")
@@ -47,11 +46,10 @@ def plotting_altitude(func):
 
 
 class NemesisResult:
-    """Class for storing the results of a NEMESIS retrieval.
+    """Class for storing and using the results of a NEMESIS retrieval.
     
     Attributes:
         core_directory (str):                   The directory of the core being analysed
-        ref (pandas.DataFrame):                 A DataFrame containing the data in the .ref file
         core (NemesisCore):                     The NemesisCore object that generated the core directory
         profiles (list[Profile]):               A list of all the retrieved Profile objects from the run
         latitude (float):                       Latitude of the observed spectrum
@@ -59,7 +57,7 @@ class NemesisResult:
         chi_sq (float):                         The chi-squared value of the retrieval
         retrieved_spectrum (pandas.DataFrame):  A DataFrame containing the measured and modelled spectrum
         retrieved_aerosols (pandas.DataFrame):  A DataFrame containing the retrieved aerosol profiles
-        retrieved_gases (pandas.DataFrame): A DataFrame containing the retrieved chemical profiles
+        retrieved_gases (pandas.DataFrame):     A DataFrame containing the retrieved chemical profiles
 """
     def __init__(self, core_directory):
         """Inititalise a NemesisResult class
@@ -73,7 +71,7 @@ class NemesisResult:
         self.retrieved_aerosols = self._read_aerosol_prf()
         self.retrieved_gases = self._read_nemesis_prf()
         self.chi_sq = self.get_chi_sq()
-  
+
     def _read_mre(self):
         mre = parsers.NemesisMre(self.core_directory / "nemesis.mre")
         self.__dict__ |= mre.__dict__
@@ -334,18 +332,26 @@ class NemesisResult:
             matplotlib.Figure: The Figure object to which the Axes belong
             matplotlib.Axes: The Axes object onto which the data was plotted"""
         
+        # Get the appropriate y axes
         y = self.retrieved_gases["pressure"] if pressure else self.retrieved_gases["height"]
         y2 = self.core.ref.data["pressure"] if pressure else self.core.ref.data["height"]
         
+        # If no gas names specififed then get every gas profile
         if gas_names is None:
             gas_names = [x for x in self.retrieved_gases.columns if x not in ("height", "pressure", "temp")]
         
+        # Plot the profiles
         colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
         for i, gas_name in enumerate(gas_names):
             ax.plot(self.retrieved_gases[gas_name], y, label=gas_name, c=colors[i])
             if include_priors:
                 ax.plot(self.core.ref.data[gas_name], y2, label=f"{gas_name} Prior", c=colors[i])
         
+        # Set a limit on lowest VMR
+        x1, x2 = ax.get_xlim()
+        if x1 < 1e-20:
+            ax.set_xlim(1e-20, x2)
+
         ax.set_xscale("log")
         ax.set_xlabel("Volume Mixing Ratio")
         ax.legend()
@@ -420,6 +426,23 @@ class NemesisResult:
         """
         x = plt if fig is None else fig
         x.savefig(self.core_directory / "plots/" + name, bbox_inches="tight", **kwargs)
+
+    def delete(self, confirm=True):
+        """Delete the NemesisResult object AND delete the corresponding core directory. This action is irreviersible!
+        
+        Args:
+            confirm (bool): Whether to prompt for confirmation
+            
+        Returns:
+            None"""
+        
+        if confirm:
+            answer = input(f"Are you sure you want to delete this core ({self.core_directory})? y/n ").lower()
+            if answer != "y":
+                return
+            
+        shutil.rmtree(self.core_directory)
+        del self
 
 
 def load_multiple_cores(parent_directory, raise_errors=True):

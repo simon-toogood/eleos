@@ -12,57 +12,61 @@ from . import constants
 
 
 class NemesisRef:
+    """Parser for nemesis.ref
+    
+    Attributes:
+        amform:
+        planet_id: """
     def __init__(self, filepath):
         self.filepath = Path(filepath)
+        self._extra_header = True
         self.read()
 
     def read(self):
         with open(self.filepath) as file:
             lines = file.read().split("\n")
+            if self._extra_header:
+                del lines[1]
+        
+        print(lines[:10])
         
         self.amform, = utils.get_ints_from_string(lines[0])
-        planet_id, latitude, num_layers, num_gases = utils.get_floats_from_string(lines[2])
+        planet_id, latitude, num_layers, num_gases = utils.get_floats_from_string(lines[1])
         self.planet_id = int(planet_id)
         self.latitude = latitude
         self.num_layers = int(num_layers)
         self.num_gases = int(num_gases)
 
         self.gas_names = []
-        for l in lines[3:3+int(self.num_gases)]:
+        for l in lines[2:2+int(self.num_gases)]:
             gas_id, isotope_id = utils.get_ints_from_string(l)
             gas_name = constants.GASES[constants.GASES.radtrans_id == gas_id].name.iloc[0]
             self.gas_names.append(f"{gas_name} {isotope_id}")
 
-        self.data = pd.read_table(self.filepath, skiprows=4+self.num_gases, sep="\s+", header=None)
+        self.data = pd.read_table(self.filepath, 
+                                  skiprows=3+int(self._extra_header)+self.num_gases, 
+                                  sep="\s+", 
+                                  header=None)
         self.data.columns = ["height", "pressure", "temperature"] + self.gas_names
 
-    def write(self, filepath=None):
-        if filepath is None:
-            filepath = self.filepath
 
-        with open(filepath, mode="w+") as file:
-            file.write(str(self.amform) + "\n")
-            file.write("1\n")
-            file.write(f"{self.planet_id} {self.latitude:.2f} {self.num_layers} {self.num_gases}\n")
-            
-            out = self.data.copy()
-            for gas_name in self.gas_names:
-                name, isotope_id = gas_name.split(" ")
-                gas_id = constants.GASES[constants.GASES.name == name].radtrans_id.iloc[0]
-                file.write(f"{gas_id} {isotope_id}\n")
-                out[gas_name] = self.data[gas_name].apply(lambda x: f"{x:.5e}")
+class NemesisPrf(NemesisRef):
+    def __init__(self, filepath):
+        self.filepath = Path(filepath)
+        self._extra_header = False
+        self.read()
 
-            file.write(out.to_string(index=False, col_space=13))
-
-    def set_pressure_limits(self, pmin=-float("inf"), pmax=float("inf")):
-        self.data = self.data[(self.data.pressure > pmin) & (self.data.pressure < pmax)]
-        self.num_layers = len(self.data)
-
-    def remove_gas(self, gas_name):
-        raise NotImplementedError()
-    
 
 class NemesisMre:
+    """Parser for the nemesis.mre file
+    
+    Attributes:
+        ispec (int): Don't know
+        ngeom (int): Number of geometries (should be 1)
+        latitude (float): Latitude of the observation
+        longitude (float): Longitude of the observation
+        retireved_spectrum pd.DataFrame: DataFrame containing the measured spectrum + all error sources and the fitted model spectra and its errors
+        retrieved_parameters List[pd.DataFrame]: List of DataFrames containing the retrieved parameters from each Profile"""
     def __init__(self, filepath):
         self.filepath = Path(filepath)
         self.read()
@@ -108,3 +112,47 @@ class NemesisMre:
                 retrievals.append(df)
         self.retrieved_parameters = retrievals
 
+
+class NemesisXsc:
+    """Parser for the nemesis.xsc file
+    
+    Attributes:
+        xsc (pd.DataFrame): The aerosol cross-sections as a function of wavelength for each aerosol mode
+        ssa (pd.DataFrame): The single scattering albedos as a function of wavelength for each aerosol modes"""
+    
+    def __init__(self, filepath):
+        self.filepath = Path(filepath)
+        self.read()
+
+    def read(self):
+        waves = []
+        ssas = []
+        xscs = []
+        with open(self.filepath) as file:
+            for i, line in enumerate(file):
+                if i == 0:
+                    continue
+                if i % 2 == 1:
+                    wavelength, *x = utils.get_floats_from_string(line)
+                    waves.append(wavelength)
+                    xscs.append(x)
+                else:
+                    s = utils.get_floats_from_string(line)
+                    ssas.append(s)
+
+        self.ssa = pd.DataFrame(ssas)
+        self.ssa.insert(0, column="wavelength", value=waves)
+        self.xsc = pd.DataFrame(xscs)
+        self.xsc.insert(0, column="wavelength", value=waves)
+
+
+class AerosolPrf:
+    def __init__(self, filepath):
+        self.filepath = Path(filepath)
+        self.read()
+
+    def read(self):
+        self.data = pd.read_table(self.filepath, sep="\s+", skiprows=2)
+        num = len(self.data.columns) - 1
+        header = ["height"] + [f"aerosol_{x}" for x in range(1, num+1)]
+        self.data.columns = header
