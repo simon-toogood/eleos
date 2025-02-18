@@ -219,9 +219,16 @@ class NemesisCore:
         Creates:
             nemesis.apr"""
         out = f"*******Apriori File*******\n           {len(self.profiles)}\n"
+
         for profile in self.profiles:
+
             profile.shape.create_required_files(self.directory)
+
+            if isinstance(profile, profiles_.AerosolProfile) and profile.retrieve_optical:
+                profile._generate_cloudfn_dat(self.directory)
+
             out += profile.generate_apr_data() + "\n"
+
         with open(self.directory / "nemesis.apr", mode="w") as file:
             file.write(out)
 
@@ -505,22 +512,11 @@ class NemesisCore:
                 if label is not None and profile.label == label:
                     return profile
 
-    def add_aerosol_mode(self, aerosol_profile=None, refractive_index_profile=None, radius=None, variance=None, refractive_index=None):
-        """Add an aerosol mode. This uses the Mie scattering option with constant refractive index over the wavelength range, which is set to be the same as the input .spx files.
-        Can be called with either of the following signatures:
+    def add_aerosol_mode(self, profile):
+        """Add an aerosol profile to retrieve
 
-        core.add_aerosol_mode(AerosolProfile(...), radius, variance, refractive_index)
-        or
-        core.add_aerosol_mode(AerosolProfile(...), ImagRefractiveIndexProfile(...))
-
-        to pull parameters from an ImagRefractiveIndexProfile or specified manually respectively
-        
         Args:
-            refractive_index_profile (ImagRefractiveIndexProfile): If given, use the aerosol radius distribution and refractive index from the Profile specified
-            radius (float): The mean radius of the aerosol particles
-            variance (float): The variance of the particle size distribution
-            refractive_index (complex): The aerosol's refractive index as a complex number (eg. 1.2 + 1e-3j)
-            
+            profile: profiles.AerosolProfile object to add
         Returns:
             None"""
 
@@ -528,24 +524,14 @@ class NemesisCore:
         self.num_aerosol_modes += 1
 
         # Add the profile to the core
-        self._add_profile(aerosol_profile)
+        self._add_profile(profile)
 
         # Assign aerosol IDs
-        aerosol_profile.aerosol_id = self.num_aerosol_modes
-
-        # Pull parameters from the refractive index profile and add to the core if given
-        if refractive_index_profile is not None:
-            refractive_index_profile.aerosol_id = self.num_aerosol_modes
-            refractive_index_profile.shape.aerosol_id = self.num_aerosol_modes
-            self._add_profile(refractive_index_profile)
-
-            radius = refractive_index_profile.shape.radius
-            variance = refractive_index_profile.shape.variance
-            refractive_index = refractive_index_profile.shape.refractive_index
+        profile.aerosol_id = self.num_aerosol_modes
 
         # Add the mode to the bottom of the Makephase input file
         with open(self.directory / "makephase.inp", mode="a") as file:
-            file.write(f"1\n{radius} {variance}\n2\n1\n{refractive_index.real} {refractive_index.imag}\n")
+            file.write(f"1\n{profile.radius} {profile.variance}\n2\n1\n{profile.refractive_index.real} {profile.refractive_index.imag}\n")
 
     def generate_core(self):
         print(f"Generating core {self.id_}")

@@ -2,12 +2,13 @@
 
 from itertools import zip_longest
 from collections import defaultdict
+from pathlib import Path
 
 from . import constants
 from . import shapes
 from . import utils
 from . import results
-
+from . import spx
 
 # idea for the future: combine AerosolProfile and ImagRefractiveIndexProfile into a single class with a toggle to retrieve
 # the radius, variance, imag refractive index
@@ -231,20 +232,37 @@ class GasProfile(Profile):
 
 
 class AerosolProfile(Profile):
-    def __init__(self, shape, **kwargs):
+    def __init__(self, 
+                 shape, 
+                 radius, 
+                 variance,
+                 refractive_index, 
+                 retrieve_optical=False, 
+                 radius_error=None,
+                 variance_error=None,
+                 imag_refractive_index_error=None,
+                 **kwargs):
         """Create a profile for a given aerosol with a given shape
         
         Args:
             shape: A Shape object to use for the profile shape
             label: (optional) An arbitrary label to associate with this profile"""
+            
         super().__init__(**kwargs)
         self.shape = shape
 
+        self.radius = radius
+        self.variance = variance
+        self.refractive_index = refractive_index
+        self.retrieve_optical = retrieve_optical
+
+        if retrieve_optical:
+            self.radius_error = radius_error
+            self.variance_error = variance_error
+            self.imag_refractive_index_error = imag_refractive_index_error
+
     def __repr__(self):
         return f"<AerosolProfile {self.aerosol_id} [{self.create_nemesis_string()}]>"
-
-    def _create_profile_from_previous_retrieval(prev_profile):
-        return AerosolProfile(label=prev_profile.label, shape=prev_profile.shape)
 
     def create_nemesis_string(self):
         """Create the NEMESIS code that represents the aerosol profile (eg. -1 0 32)
@@ -264,51 +282,41 @@ class AerosolProfile(Profile):
             
         Returns:
             str: The string to write to the .apr file"""
-        return self.create_nemesis_string() + f" - CP{self.aerosol_id}\n" + self.shape.generate_apr_data()
+        aerosol_part = self.create_nemesis_string() + f" - {self.label}\n" + self.shape.generate_apr_data()
+        if self.retrieve_optical:
+            imagn_part = f"\n444 {self.aerosol_id} 444 - {self.label}\ncloudf{self.aerosol_id}.dat"
+            return aerosol_part + imagn_part
+        else:
+            return aerosol_part
+
+    def _generate_cloudfn_dat(self, directory):
+        # Get first wavelength
+        directory = Path(directory)
+        wl = spx.read(directory / "nemesis.spx").geometries[0].wavelengths[0]
+
+        # Get number of wavelengths in xsc file
+        with open(directory / "nemesis.xsc") as file:
+            lines = file.read().split("\n")
+            nwave = (len(lines)-2) // 2
+            refwave = float(lines[1].split()[0])
+        
+        # Generate cloudfN.dat
+        with open(directory / f"cloudf{self.aerosol_id}.dat", mode="w+") as file:
+            utils.write_nums(file, self.radius, self.radius_error)
+            utils.write_nums(file, self.variance, self.variance_error)
+            file.write(f"{nwave}    -1\n")
+            utils.write_nums(file, refwave, self.refractive_index.real)
+            utils.write_nums(file, refwave)
+            for line in lines:
+                vals = line.split()
+                if len(vals) < 2:
+                    continue
+                utils.write_nums(file, float(vals[0]), self.refractive_index.imag, self.imag_refractive_index_error)
+    
+
 
     def get_name(self):
         if self.label is None:
             return f"Aerosol {self.aerosol_id}"
-        else:
-            return self.label
-
-
-class ImagRefractiveIndexProfile(Profile):
-    def __init__(self, shape, **kwargs):
-        """Create a profile that retrieves the imaginary part of a clouds refractive index. Will require a corresponding AerosolProfile
-        to be defined. This is currently limited to constant refractive index as a function of wavelength.
-
-        Args:
-            aerosol_id (int): The ID of the aerosol
-            shape (Shape444): The associated Shape444 object containing the aerosol properties
-            label: (optional) An arbitrary label to associate with this profile
-            """
-
-        super().__init__(**kwargs)
-        assert isinstance(shape, shapes.Shape444)
-        self.shape = shape
-
-    def __repr__(self):
-        return f"<ImagRefractiveIndexProfile {self.aerosol_id} [{self.create_nemesis_string()}]>"
-
-    def _create_profile_from_previous_retrieval(prev_profile):
-        return ImagRefractiveIndexProfile(label=prev_profile.label, shape=prev_profile.shape)
-
-    def create_nemesis_string(self):
-        """Create the NEMESIS code that represents the profile.
-        
-        Args:
-            None
-            
-        Returns:
-            str: The NEMESIS string"""
-        return f"444 {self.aerosol_id} 444"
-    
-    def generate_apr_data(self):
-        return f"{self.create_nemesis_string()} - n{self.aerosol_id}\n{self.shape.generate_apr_data()}"
-
-    def get_name(self):
-        if self.label is None:
-            return f"ImagRefractiveIndex {self.aerosol_id}"
         else:
             return self.label

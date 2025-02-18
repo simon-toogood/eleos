@@ -250,59 +250,6 @@ height values together with their estimated errors."""
     def generate_apr_data(self):
         return f"{self.base_pressure} {self.base_pressure_error}\n{self.top_pressure} {self.top_pressure_error}\n{self.opacity} {self.opacity_error}\n{self.fsh} {self.fsh_error}"
         
-@shapeclass
-class Shape444(Shape):
-    """If VARIDENT(IVAR,1) is equal to 444 then the parameter described is a retrieval
-of the imaginary part of a cloud’s complex refractive index spectrum. The cloud
-particle identifier is given by VARIDENT(IVAR,2). The next line contains the
-name of a separate input file, which contains the following information. Line 1
-contains the mean radius of the particle size distribution and error (assumes standard
-size distribution), while line 2 gives the variance of the size distribution and error.
-Line 3 gives the number of wavelengths/wavenumbers for which imaginary
-refractive index spectrum is tabulated, together with the correlation length of this a
-priori spectrum. Line 4 gives a reference wavelength/wavenumber and the value of
-the real part of the refractive index at that reference. Line 5 gives the
-wavelength/wavenumber to which the extinction cross-section spectrum should be
-normalised. Following lines contain the wavelengths/wavenumbers and the a priori
-values of the imaginary refractive index spectrum and errors. In this model, the code
-the real part of the refractive index spectrum is calculated with a Kramers-Kronig
-analysis and then the Mie scattering properties of the particles calculated."""
-    ID: ClassVar[int] = 444
-    NAMES: ClassVar[list[str]] = ["radius", "variance", "refractive_index"]
-    radius: float
-    radius_error: float
-    variance: float
-    variance_error: float
-    refractive_index: complex
-    refractive_index_error: float
-
-    def generate_apr_data(self):
-        return f"cloudf{self.aerosol_id}.dat"
-
-    def create_required_files(self, directory):
-        # Get first wavelength
-        directory = Path(directory)
-        wl = spx.read(directory / "nemesis.spx").geometries[0].wavelengths[0]
-
-        # Get number of wavelengths in xsc file
-        with open(directory / "nemesis.xsc") as file:
-            lines = file.read().split("\n")
-            nwave = (len(lines)-2) // 2
-            refwave = float(lines[1].split()[0])
-        
-        # Generate cloudfN.dat
-        with open(directory / f"cloudf{self.aerosol_id}.dat", mode="w+") as file:
-            utils.write_nums(file, self.radius, self.radius_error)
-            utils.write_nums(file, self.variance, self.variance_error)
-            file.write(f"{nwave}    -1\n")
-            utils.write_nums(file, refwave, self.refractive_index.real)
-            utils.write_nums(file, refwave)
-            for line in lines:
-                vals = line.split()
-                if len(vals) < 2:
-                    continue
-                utils.write_nums(file, float(vals[0]), self.refractive_index.imag, self.refractive_index_error)
-    
 
 def get_shape_from_id(id_):
     """Given a shape ID integer, return a reference to the class corresponding to that ID. Note that this returns a class, not an instantiated object."""
@@ -312,4 +259,4 @@ def get_shape_from_id(id_):
             return shape_class
 
 
-ALL_SHAPES = [Shape0, Shape1, Shape2, Shape4, Shape20, Shape32, Shape37, Shape47, Shape48, Shape444] #: A list of all the Shape classes
+ALL_SHAPES = [Shape0, Shape1, Shape2, Shape4, Shape20, Shape32, Shape37, Shape47, Shape48] #: A list of all the Shape classes
