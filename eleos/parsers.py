@@ -3,10 +3,13 @@
 import pandas as pd
 import itertools as it
 import io
+import numpy as np
 from pathlib import Path
 
 from . import utils
 from . import constants
+from . import profiles as profiles_
+
 
 ## TODO: Move all parsing routines here, .itr, .prc etc...
 
@@ -65,7 +68,7 @@ class NemesisMre:
         ngeom (int): Number of geometries (should be 1)
         latitude (float): Latitude of the observation
         longitude (float): Longitude of the observation
-        retireved_spectrum pd.DataFrame: DataFrame containing the measured spectrum + all error sources and the fitted model spectra and its errors
+        retrieved_spectrum pd.DataFrame: DataFrame containing the measured spectrum + all error sources and the fitted model spectra and its errors
         retrieved_parameters List[pd.DataFrame]: List of DataFrames containing the retrieved parameters from each Profile"""
     def __init__(self, filepath):
         self.filepath = Path(filepath)
@@ -103,14 +106,15 @@ class NemesisMre:
                                                 index_col=0, sep="\s+", skiprows=5, nrows=blocks[0]-7)
 
         # Read in each retrieved parameter 
-        retrievals = []
+        self.retrieved_parameters = []
+        self.initial_state_vector = []
         with open(self.filepath) as file:
             for start, end in it.pairwise(blocks):
                 data = utils.read_between_lines(file, start, end)
                 df = pd.read_table(io.StringIO(data), skiprows=4, sep="\s+", names=["i", "ix", "prior", "prior_error", "retrieved", "retrieved_error"])
                 df.drop(["i", "ix"], axis=1, inplace=True)
-                retrievals.append(df)
-        self.retrieved_parameters = retrievals
+                self.initial_state_vector += list(df.prior)
+                self.retrieved_parameters.append(df)
 
 
 class NemesisXsc:
@@ -152,7 +156,57 @@ class AerosolPrf:
         self.read()
 
     def read(self):
-        self.data = pd.read_table(self.filepath, sep="\s+", skiprows=2)
+        self.data = pd.read_table(self.filepath, sep="\s+", skiprows=2, header=None)
         num = len(self.data.columns) - 1
         header = ["height"] + [f"aerosol_{x}" for x in range(1, num+1)]
         self.data.columns = header
+
+
+class NemesisItr:
+    """Parser for nemesis.itr. Also requires a NemesisMre parser
+    
+    Attributes:
+        state_vectors: pd.DataFrame containing the linear state vector for each iteration"""
+    
+    def __init__(self, filepath, mre=None):
+        self.filepath = Path(filepath)
+
+        if mre is None:
+            self.mre = NemesisMre(self.filepath.parent / "nemesis.mre")
+        else:
+            self.mre = mre
+
+        self.read()
+
+    def read(self):
+        data = []
+        count = -1
+        with open(self.filepath) as file:
+            for i, line in enumerate(file.read().split("\n")):
+                if line == " ":
+                    count = 3
+                else:
+                    count -= 1
+                if count == 0:
+                    d = []
+                    for i, v in enumerate(line.split()):
+                        d.append(float(v))
+                    data.append(d)
+
+        exps = []
+        for i, value in enumerate(data[0]):
+            flag = np.isclose(self.mre.initial_state_vector[i], np.exp(value))
+            exps.append(flag)
+
+        self.state_vectors = pd.DataFrame(data)
+        for i, column in enumerate(self.state_vectors.columns):
+            if exps[i]:
+                self.state_vectors[column] = np.exp(self.state_vectors[column])
+
+    def add_column_names(self, profiles):
+        names = []
+        for label, profile in profiles.items():
+            names += [f"{label} {n}" for n in profile.shape.NAMES]
+            if isinstance(profile, profiles_.AerosolProfile):
+                names += [f"{label} radius", f"{label} variance", f"{label} imag_n"]
+        self.state_vectors.columns = names

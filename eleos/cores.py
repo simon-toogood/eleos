@@ -212,18 +212,23 @@ class NemesisCore:
             
         Creates:
             nemesis.apr"""
-        out = f"*******Apriori File*******\n           {len(self.profiles)}\n"
+        
+        out = f"*******Apriori File*******\n           <NUM_PROFILES>\n"
 
+        num_profiles = 0
         for profile in self.profiles.values():
 
             profile.shape.create_required_files(self.directory)
 
             if isinstance(profile, profiles_.AerosolProfile) and profile.retrieve_optical:
                 profile._generate_cloudfn_dat(self.directory)
+                num_profiles += 1
 
             out += profile.generate_apr_data() + "\n"
+            num_profiles += 1
 
         with open(self.directory / "nemesis.apr", mode="w") as file:
+            out = out.replace("<NUM_PROFILES>", str(num_profiles))
             file.write(out)
 
     def _generate_set(self):
@@ -484,7 +489,7 @@ class NemesisCore:
                 out += f"{k}: {v}"
             out += "\n"
 
-        with open(self.directory / "eleos_inputs.txt", mode="w+") as file:
+        with open(self.directory / "summary.txt", mode="w+") as file:
             file.write(out)
 
     def get_aerosol_profile(self, id=None):

@@ -1,6 +1,5 @@
 """This module contains the classes for creating Profile objects."""
 
-from itertools import zip_longest
 from collections import defaultdict
 from pathlib import Path
 import re
@@ -11,8 +10,6 @@ from . import utils
 from . import results
 from . import spx
 
-
-# not happy with the implementation for setting priors from previous retrieval...
 
 class Profile:
     def __init__(self, label=None):
@@ -37,7 +34,7 @@ class Profile:
                 except:
                     data[-1].append("NA")
         
-        return utils.generate_ascii_table(self.get_name(), headers, [n[0] for n in names], data)
+        return utils.generate_ascii_table(self.label, headers, [n[0] for n in names], data)
 
     @classmethod
     def from_previous_retrieval(cls, core_directory, label=None):
@@ -63,27 +60,7 @@ class Profile:
 
         return new_profile
 
-    def _add_result(self, df):
-        """Take in a DataFrame created by reading in the .mre file (results.NemesisResult.read_mre) and assign the correct attributes
-        
-        Args:
-            df: pandas.DataFrame with columns "prior", "prior_error", "retrieved", "retrieved_error" and a row for each parameter
-            
-        Returns:
-            None"""
-        
-        # Get order of parameters
-        names = self.shape.NAMES
-        assert len(names) == len(df)
-        # Set attributes of the child Shape object
-        for name, (_, row) in zip(names, df.iterrows()):
-            for title, value in zip(row.index, row.values):
-                if "prior" in title:
-                    attrname = title.replace("prior", name)
-                elif "retrieved" in title:
-                    attrname = title.replace("retrieved", f"retrieved_{name}")
-                setattr(self.shape, attrname, value)
-
+   
         # Toggle retrieved flag
         self.retrieved = True
 
@@ -108,7 +85,7 @@ class TemperatureProfile(Profile):
         
         Args:
             filepath: The filepath of the prior temperature profile
-            label: (optional) An arbitrary label to associate with this profile
+            label (str): A label to associate with this Profile. By default it is "Temperature"
         """
         super().__init__(label)
         if self.label is None:
@@ -124,9 +101,6 @@ class TemperatureProfile(Profile):
     def _add_result(self, df):
         self.shape.data = df
         self.retrieved = True
-
-    def _create_profile_from_previous_retrieval(prev_profile):
-        raise NotImplementedError()
 
     def create_nemesis_string(self):
         """Create the NEMESIS code that represents the temperature profile. Temperature profiles currently only support mode 0 0 0 so this function's return value is always constant
@@ -165,10 +139,11 @@ class GasProfile(Profile):
         """Create a profile for a given gas (optionally an isotopologue) with a given shape
         
         Args:
-            gas_name: The name of the gas (eg 'CH4'). Specify either this OR gas_id
-            gas_id: The radtrans ID of the gas (eg. 6). Specify either this OR gas_name
-            isotope_id: The ID of the isotopologue to use. Use 0 for a mix of all at terrestrial abundance
-            shape: A Shape object to use for the profile shape
+            gas_name (str): The name of the gas (eg 'CH4'). Specify either this OR gas_id
+            gas_id (int): The radtrans ID of the gas (eg. 6). Specify either this OR gas_name
+            isotope_id (int): The ID of the isotopologue to use. Use 0 for a mix of all at terrestrial abundance
+            shape (Shape): A Shape object to use for the profile shape
+            label (str): A label to associate with this Profile. By default it is "<gas_name> <isotope_id>" (eg. "PH3 0")
         """
         
         super().__init__(label=label)
@@ -190,7 +165,7 @@ class GasProfile(Profile):
             self.gas_id = constants.GASES.loc[constants.GASES.name == gas_name].radtrans_id.iloc[0]
         
         if label is None:
-            self.label = self.gas_name
+            self.label =  f"{self.gas_name} {self.isotope_id}"
 
     def __repr__(self):
         return f"<GasProfile {self.gas_name} [{self.create_nemesis_string()}]>"
@@ -216,6 +191,31 @@ class GasProfile(Profile):
     def _create_profile_from_previous_retrieval(prev_profile):
         return GasProfile(gas_name=prev_profile.gas_name, isotope_id=prev_profile.isotope_id, shape=prev_profile.shape, label=prev_profile.label)
 
+    def _add_result(self, df):
+        """Take in a DataFrame created by reading in the .mre file (results.NemesisResult.read_mre) and assign the correct attributes
+        
+        Args:
+            df: pandas.DataFrame with columns "prior", "prior_error", "retrieved", "retrieved_error" and a row for each parameter
+            
+        Returns:
+            None"""
+        
+        # Get order of parameters
+        names = self.shape.NAMES
+        assert len(names) == len(df)
+
+        # Set attributes of the child Shape object
+        for name, (_, row) in zip(names, df.iterrows()):
+            for title, value in zip(row.index, row.values):
+                if "prior" in title:
+                    attrname = title.replace("prior", name)
+                elif "retrieved" in title:
+                    attrname = title.replace("retrieved", f"retrieved_{name}")
+                setattr(self.shape, attrname, value)
+
+        self.retrieved = True
+        self.shape.share_parameters(self)
+
     def create_nemesis_string(self):
         """Create the NEMESIS code that represents the gas profile (eg. 23 0 1)
         
@@ -236,12 +236,6 @@ class GasProfile(Profile):
             str: The string to write to the .apr file"""
         return self.create_nemesis_string() + " - " + self.gas_name + "\n" + self.shape.generate_apr_data()
 
-    def get_name(self):
-        if self.label is None:
-            return f"{self.gas_name} {self.isotope_id}"
-        else:
-            return self.label
-
 
 class AerosolProfile(Profile):
     def __init__(self, 
@@ -258,9 +252,9 @@ class AerosolProfile(Profile):
         """Create a profile for a given aerosol with a given shape
         
         Args:
-            shape: A Shape object to use for the profile shape
-            label: (optional) An arbitrary label to associate with this profile"""
-            
+            shape (Shape): A Shape object to use for the profile shape
+            label (str): A label to associate with this Profile. By default it is "Aerosol <aerosol_id>" (eg. "Aerosol 1") """            
+        
         super().__init__(label=label)
         if label is None:
             self.label = f"Aerosol {self.aerosol_id}"
@@ -279,6 +273,7 @@ class AerosolProfile(Profile):
             self.radius_error = radius_error
             self.variance_error = variance_error
             self.imag_n_error = imag_n_error
+            self.NAMES = self.NAMES + ["radius", "variance", "imag_n"]
 
     def __repr__(self):
         return f"<AerosolProfile {self.aerosol_id} [{self.create_nemesis_string()}]>"
@@ -300,6 +295,41 @@ class AerosolProfile(Profile):
         grouped = [sorted(x, key=sort_key) for x in list(groups.values())]
 
         return [g for g in grouped if g[0] not in ("label", "retrieved", "core", "aerosol_id")]
+
+    def _add_result(self, df, df_444=None):
+        """Take in a DataFrame created by reading in the .mre file (results.NemesisResult.read_mre) and assign the correct attributes
+        
+        Args:
+            df: pandas.DataFrame with columns "prior", "prior_error", "retrieved", "retrieved_error" and a row for each parameter
+            df_444: Same as df, but this is for the 444 profile if retrieving optical properties
+        
+        Returns:
+            None"""
+
+        # Get order of parameters
+        names = self.shape.NAMES
+        assert len(names) == len(df)
+
+        # Set attributes of the child Shape object
+        for name, (_, row) in zip(names, df.iterrows()):
+            for title, value in zip(row.index, row.values):
+                if "prior" in title:
+                    attrname = title.replace("prior", name)
+                elif "retrieved" in title:
+                    attrname = title.replace("retrieved", f"retrieved_{name}")
+                setattr(self.shape, attrname, value)
+    
+        if df_444 is not None:
+            for name, (_, row) in zip(["radius", "variance", "imag_n"], df_444.iterrows()):
+                for title, value in zip(row.index, row.values):
+                    if "prior" in title:
+                        attrname = title.replace("prior", name)
+                    elif "retrieved" in title:
+                        attrname = title.replace("retrieved", f"retrieved_{name}")
+                    setattr(self, attrname, value)
+
+        self.retrieved = True
+        self.shape.share_parameters(self)
 
     def create_nemesis_string(self):
         """Create the NEMESIS code that represents the aerosol profile (eg. -1 0 32)
