@@ -64,84 +64,36 @@ class NemesisResult:
         
         Args:
             core_directory: The directory of a single core"""
+        
+        # Load core directory
         self.core_directory = Path(core_directory)
         self.core = cores.load_core(self.core_directory)
         self.profiles = self.core.profiles
-        self._read_mre()
-        self.retrieved_aerosols = self._read_aerosol_prf()
-        self.retrieved_gases = self._read_nemesis_prf()
+
+        # Add results to the profiles
+        self._add_results_to_profiles()
+
+        # Parse some files
+        self.mre = parsers.NemesisMre(self.core_directory / "nemesis.mre")
+        self.itr = parsers.NemesisItr(self.core_directory / "nemesis.itr")
+        self.aerosol_prf = parsers.AerosolPrf(self.core_directory / "aerosol.prf")
+        self.nemesis_prf = parsers.NemesisPrf(self.core_directory / "nemesis.prf")
+        self.itr.add_column_names(self.profiles)
+        self.aerosol_prf.data["pressure"] = self.nemesis_prf.data["pressure"]
+
+        # Add the mre object attributes to the NemesisResult object for convenience
+        self.__dict__ |= self.mre.__dict__
+        self.retrieved_aerosols = self.aerosol_prf.data
+        self.retrieved_gases = self.nemesis_prf.data
         self.chi_sq = self.get_chi_sq()
 
-    def _read_mre(self):
-        mre = parsers.NemesisMre(self.core_directory / "nemesis.mre")
-        self.__dict__ |= mre.__dict__
-        for profile, df in zip(self.profiles, mre.retrieved_parameters):
-            profile._add_result(df)
-
-    def _read_aerosol_prf(self):
-        header = ["height"] + [f"aerosol_{x}" for x in range(1, self.core.num_aerosol_modes+1)]
-        data = pd.read_table(self.core.directory / "aerosol.prf", sep="\s+", skiprows=2, names=header)
-        data.insert(1, "pressure", self.core.ref.data.pressure)
-        return data
-
-    def _read_itr(self):
-        """Read in the nemesis.itr file. WARNING: This will almost certainly fail as it has file number offset hardcoded. It's on the todo list!
-        
-        Args:
-            None
-            
-        Returns:
-            pandas.DataFrame: A DataFrame containing the data from the .itr file with columns for each parameter"""
-        
-        # Reading the mre file to get the order of the parameters in the state vector
-        with open(self.core_directory / "nemesis.mre") as file:
-            lines = file.read().split("\n")
-            toggle = False
-            good = []
-            for line in lines:
-                if "i, ix" in line:
-                    toggle = True
-                elif "Variable" in line:
-                    toggle = False
-                if toggle:
-                    good.append(line)
-            great = []
-            for line in good:
-                if "i, ix" not in line:
-                    great.append([float(x) for x in line.split()])
-            del great[-1]
-            vec = pd.DataFrame(great)
-            vec.columns = ["i", "ix", "xa", "sa_err", "xn", "xn_err"]
-
-        # Reading the itr file and extracting state vector for each iteration and the prior vector
-        with open(self.core_directory / "nemesis.itr") as file:
-            # Get the prior state vector
-            prior = [float(x) for x in file.readlines()[5].split()]
-            exps = []
-            for p, v in zip(prior, vec.xa):
-                exps.append(np.isclose(p, v))
-            
-            # Re-read the file and get the state vector for each iteration (which is the 3rd line after each blank line)
-            file.seek(0)
-            data = []
-            count = -1
-            for i, line in enumerate(file.read().split("\n")):
-                if line == " ":
-                    count = 3
-                else:
-                    count -= 1
-                if count == 0:
-                    d = []
-                    for i, v in enumerate(line.split()):
-                        d.append(float(v) if exps[i] else np.exp(float(v)))
-                    data.append(d)
-
-            # Assign the results to a DataFrame
-            data = pd.DataFrame(data)
-            state_vector_names = [f"{p.get_name()} {name.replace('_', ' ')}" for p in self.profiles for name in p.shape.NAMES]
-            data.columns = state_vector_names
-
-        return data
+    def _add_results_to_profiles(self):
+        for label, profile in self.profiles.items():
+            if isinstance(profile, profiles.AerosolProfile) and profile.retrieve_optical:
+                profile._add_result(self.mre.retrieved_parameters.pop(0),
+                                    self.mre.retrieved_parameters.pop(0))
+            else:
+                profile._add_result(self.mre.retrieved_parameters.pop(0))
 
     def _read_nemesis_prf(self):
         with open(self.core_directory / "nemesis.prf") as file:
@@ -306,7 +258,7 @@ class NemesisResult:
 
             # Get a label to use as the legend label - either the custom label or aerosol_<ID>
             id = int(name.removeprefix("aerosol_"))
-            profile = self.core.get_aerosol_mode(id=id)
+            profile = self.core.get_aerosol_profile(id=id)
             if profile.label is not None:
                 leg_label = profile.label
             else:
@@ -350,7 +302,7 @@ class NemesisResult:
         # Set a limit on lowest VMR
         x1, x2 = ax.get_xlim()
         if x1 < 1e-20:
-            ax.set_xlim(1e-20, x2)
+            ax.set_xlim(1e-20, 1)
 
         ax.set_xscale("log")
         ax.set_xlabel("Volume Mixing Ratio")
@@ -366,9 +318,9 @@ class NemesisResult:
             matplotlib.Figure: The produced figure
             dict(str: matplotlib.Axes): The axes of the produced figure"""
         names = []
-        for profile in self.profiles:
+        for label, profile in self.profiles.items():
             if isinstance(profile, profiles.GasProfile):
-                names.append(f"{profile.gas_name} {profile.isotope_id}")
+                names.append(label)
 
         fig, axs = plt.subplot_mosaic("AAA\nBBB\nCDE", 
                               gridspec_kw={"hspace": 0.25, "wspace": 0.35},
@@ -393,9 +345,9 @@ class NemesisResult:
         Returns:
             matplotlib.Figure: The Figure object to which the Axes belong
             matplotlib.Axes: The Axes object onto which the data was plotted"""
-                
-        data = self._read_itr()
-            
+                            
+        data = self.itr.state_vectors
+
         nrows = int(np.ceil(np.sqrt(len(data.columns))))
         ncols = int(np.ceil(len(data.columns) / nrows))
 
