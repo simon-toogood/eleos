@@ -249,6 +249,7 @@ class AerosolProfile(Profile):
             label: (optional) An arbitrary label to associate with this profile"""
             
         super().__init__(**kwargs)
+        self.aerosol_id = "UNASSIGNED"
         self.shape = shape
 
         self.radius = radius
@@ -313,8 +314,6 @@ class AerosolProfile(Profile):
                     continue
                 utils.write_nums(file, float(vals[0]), self.refractive_index.imag, self.imag_refractive_index_error)
     
-
-
     def get_name(self):
         if self.label is None:
             return f"Aerosol {self.aerosol_id}"

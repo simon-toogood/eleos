@@ -139,10 +139,12 @@ class NemesisCore:
         # Add a list to hold any FixedPeak classes the user wants
         self.fixed_peaks = []
 
-        # Add a reference to self in each Profile and check that there are no Aerosol profiles
+        # Add a reference to self in each Profile and set up AerosolProfiles correctly
+        print(self.profiles)
         for profile in self.profiles:
-            if isinstance(profile, (profiles_.AerosolProfile, profiles_.ImagRefractiveIndexProfile)):
-                raise ValueError("Aerosol-related profile specified in constructor - please use core.add_aerosol_profile(...) instead!")
+            print(profile)
+            if isinstance(profile, profiles_.AerosolProfile):
+                self.add_aerosol_mode(profile)
             profile.core = self
 
         # If in forward mode, set the number of iterations to 0
@@ -517,14 +519,12 @@ class NemesisCore:
 
         Args:
             profile: profiles.AerosolProfile object to add
+            
         Returns:
             None"""
 
         # Increment aerosol mode counter        
         self.num_aerosol_modes += 1
-
-        # Add the profile to the core
-        self._add_profile(profile)
 
         # Assign aerosol IDs
         profile.aerosol_id = self.num_aerosol_modes
