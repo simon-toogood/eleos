@@ -61,10 +61,7 @@ class Shape:
         pass
 
     def __repr__(self):
-        out = f"Shape:\n    ID: {self.ID}"
-        for name, value in self.__dict__.items():
-            out += f"\n    {name}: {value}"    
-        return out
+        return f"<Shape{self.ID}>"
     
     def _set_prior_to_retrieved(self):
         """Set the prior values to the retrieved values and delete the retrived_* attributes."""
@@ -86,6 +83,9 @@ class Shape:
     def create_required_files(self, directory):
         """Some Shapes require additional files to be created/copied into the core directory"""
         pass
+
+    def share_parameters(self, obj):
+        obj.__dict__ |= self.__dict__
 
 @shapeclass
 class Shape0(Shape):

@@ -69,7 +69,6 @@ class NemesisCore:
 
         # Assign attributes passed in
         self.spx_file = Path(spx_file).resolve()
-        self.profiles = profiles
         self.planet = planet.lower()
         self.scattering = scattering
         self.forward = forward
@@ -133,19 +132,16 @@ class NemesisCore:
         self.min_pressure = self.ref.data.iloc[-1].pressure
         self.max_pressure = self.ref.data.iloc[0].pressure
 
-        # Set number of aerosol modes (incremented by add_aerosol_mode)
+        # Set number of aerosol modes (incremented by add_profile)
         self.num_aerosol_modes = 0
 
         # Add a list to hold any FixedPeak classes the user wants
         self.fixed_peaks = []
 
         # Add a reference to self in each Profile and set up AerosolProfiles correctly
-        print(self.profiles)
-        for profile in self.profiles:
-            print(profile)
-            if isinstance(profile, profiles_.AerosolProfile):
-                self.add_aerosol_mode(profile)
-            profile.core = self
+        self.profiles = dict()
+        for profile in profiles:
+            self.add_profile(profile)
 
         # If in forward mode, set the number of iterations to 0
         if self.forward:
@@ -161,10 +157,6 @@ class NemesisCore:
     def _save_core(self):
         with open(self.directory / "core.pkl", mode="wb") as file:
             pickle.dump(self, file)
-
-    def _add_profile(self, profile):
-        profile.core = self
-        self.profiles.append(profile)
 
     def _copy_input_files(self):
         """Copy the given .spx and .ref file into the core, as well as the eleos generation script itself
@@ -222,7 +214,7 @@ class NemesisCore:
             nemesis.apr"""
         out = f"*******Apriori File*******\n           {len(self.profiles)}\n"
 
-        for profile in self.profiles:
+        for profile in self.profiles.values():
 
             profile.shape.create_required_files(self.directory)
 
@@ -482,10 +474,12 @@ class NemesisCore:
         out = ""
         for k, v in self.__dict__.items():
             if k == "profiles":
-                out += "profiles:"
-                for p in v:
-                    out += utils.indent(p.__repr__(), level=1)
-                    out += utils.indent(p.compact_str(), level=2)
+                out += "profiles:\n"
+                for label, profile in v.items():
+                    out += utils.indent(profile.__repr__(), level=1)
+                    out += "\n"
+                    out += utils.indent("\n".join([f"{k}: {v}" for k,v in profile.__dict__.items()]), level=2)
+                    out += "\n"
             else:
                 out += f"{k}: {v}"
             out += "\n"
@@ -493,10 +487,8 @@ class NemesisCore:
         with open(self.directory / "eleos_inputs.txt", mode="w+") as file:
             file.write(out)
 
-    def get_aerosol_mode(self, id=None, label=None):
-        """Given an aerosol ID (positive, as used by NEMESIS), or an eleos label, return the corresponding AerosolProfile object.
-        Note that as there is no uniqueness requirement on eleos labels, this function will return the Profile with the lowest aerosol ID
-        in the case of multiple similar labels. This may be updated in the future to return a list of all matching profiles.
+    def get_aerosol_profile(self, id=None):
+        """Given an aerosol ID (positive, as used by NEMESIS) return the corresponding AerosolProfile object.
         
         Args:
             id (int): The aerosol ID
@@ -507,38 +499,41 @@ class NemesisCore:
 
         if id > self.num_aerosol_modes:
             raise IndexError(f"Aerosol index is too large! ({id} vs {self.num_aerosol_modes} max.)")
-        for profile in self.profiles:
+        
+        for profile in self.profiles.values():
             if isinstance(profile, profiles_.AerosolProfile):
-                if id is not None and profile.aerosol_id == id:
-                    return profile
-                if label is not None and profile.label == label:
+                if profile.aerosol_id == id:
                     return profile
 
-    def add_aerosol_mode(self, profile):
-        """Add an aerosol profile to retrieve
+    def add_profile(self, profile):
+        """Add a profile to retrieve
 
         Args:
-            profile: profiles.AerosolProfile object to add
-            
+            profile: profiles.Profile object to add
+
         Returns:
             None"""
+        
+        self.profiles[profile.label] = profile
+        profile.core = self
 
-        # Increment aerosol mode counter        
-        self.num_aerosol_modes += 1
+        if isinstance(profile, profiles_.AerosolProfile):
+            # Increment aerosol mode counter        
+            self.num_aerosol_modes += 1
 
-        # Assign aerosol IDs
-        profile.aerosol_id = self.num_aerosol_modes
+            # Assign aerosol IDs
+            profile.aerosol_id = self.num_aerosol_modes
 
-        # Add the mode to the bottom of the Makephase input file
-        with open(self.directory / "makephase.inp", mode="a") as file:
-            file.write(f"1\n{profile.radius} {profile.variance}\n2\n1\n{profile.refractive_index.real} {profile.refractive_index.imag}\n")
+            # Add the mode to the bottom of the Makephase input file
+            with open(self.directory / "makephase.inp", mode="a") as file:
+                file.write(f"1\n{profile.radius} {profile.variance}\n2\n1\n{profile.real_n} {profile.imag_n}\n")
 
     def generate_core(self):
         print(f"Generating core {self.id_}")
 
         # Consistency check for aerosol mode ID - sometimes this screws up and I'm not sure why
         ids = []
-        for p in self.profiles:
+        for p in self.profiles.values():
             if isinstance(p, profiles_.AerosolProfile):
                 ids.append(p.aerosol_id)
         if len(set(ids)) != len(ids):

@@ -3,6 +3,7 @@
 from itertools import zip_longest
 from collections import defaultdict
 from pathlib import Path
+import re
 
 from . import constants
 from . import shapes
@@ -10,8 +11,6 @@ from . import utils
 from . import results
 from . import spx
 
-# idea for the future: combine AerosolProfile and ImagRefractiveIndexProfile into a single class with a toggle to retrieve
-# the radius, variance, imag refractive index
 
 # not happy with the implementation for setting priors from previous retrieval...
 
@@ -23,43 +22,22 @@ class Profile:
         self.label = label
 
     def __str__(self):
-        # generate table title
-        try:
-            self.label
-        except:
-            self.label = None
+        if not self.retrieved:
+            headers = ["Prior", "Error"]
+        else:
+            headers = ["Prior", "Error", "Retrieved", "Error"]
 
-        attrs = []
-        for name in self.shape.NAMES:
-            if self.retrieved:
-                attrs.append([f"{name}", f"{name}_error", f"retrieved_{name}", f"retrieved_{name}_error"])
-                headers = ["Prior", "Error", "Retrieved", "Error"]
-            else:
-                attrs.append([f"{name}", f"{name}_error"])
-                headers = ["Prior", "Error"]
-
-        # extract all the attribute values
-        values = []
-        for attr_list in attrs:
-            values.append([])
-            for attr in attr_list:
-                values[-1].append(getattr(self.shape, attr))
-    
-        return utils.generate_ascii_table(self.get_name(), headers, self.shape.NAMES, values)
-
-    def compact_str(self):
-        out = f"ID: {self.shape.ID}\n"
-        for k, v in self.__dict__.items():
-            if k == "shape":
-                for name in self.shape.NAMES:
-                    out += f"{name}: {getattr(self.shape, name)}±{getattr(self.shape, f'{name}_error')}\n"
-                    if self.retrieved:
-                        f"{getattr(self.shape, f'retrieved_{name}')}±{getattr(self.shape, f'retrieved_{name}_error')}\n"
-            elif k in ("core", "retrieved", "shape"):
-                pass
-            else:
-                out += f"{k}: {v}\n"
-        return out.rstrip("\n")
+        names = self._get_displayable_attributes()
+        data = []
+        for name_group in names:
+            data.append([])
+            for i in range(len(headers)):
+                try:
+                    data[-1].append(getattr(self, name_group[i]))
+                except:
+                    data[-1].append("NA")
+        
+        return utils.generate_ascii_table(self.get_name(), headers, [n[0] for n in names], data)
 
     @classmethod
     def from_previous_retrieval(cls, core_directory, label=None):
@@ -125,18 +103,23 @@ class Profile:
 
 
 class TemperatureProfile(Profile):
-    def __init__(self, filepath, **kwargs):
+    def __init__(self, filepath, label=None):
         """Create a temperature profile from a prior file
         
         Args:
             filepath: The filepath of the prior temperature profile
             label: (optional) An arbitrary label to associate with this profile
         """
-        super().__init__(**kwargs)
+        super().__init__(label)
+        if self.label is None:
+            self.label = "Temperature"
         self.shape = shapes.Shape0(filepath=filepath)
 
     def __repr__(self):
         return f"<TemperatureProfile [{self.create_nemesis_string()}]>"
+
+    def _get_displayable_attributes(self):
+        return []
 
     def _add_result(self, df):
         self.shape.data = df
@@ -173,7 +156,12 @@ class TemperatureProfile(Profile):
 
 
 class GasProfile(Profile):
-    def __init__(self, gas_name=None, gas_id=None, isotope_id=0, shape=None, **kwargs):
+    def __init__(self, 
+                 gas_name=None, 
+                 gas_id=None, 
+                 isotope_id=0, 
+                 shape=None, 
+                 label=None):
         """Create a profile for a given gas (optionally an isotopologue) with a given shape
         
         Args:
@@ -183,11 +171,15 @@ class GasProfile(Profile):
             shape: A Shape object to use for the profile shape
         """
         
-        super().__init__(**kwargs)
+        super().__init__(label=label)
+
         self.isotope_id = isotope_id
+
         if shape is None:
             raise ValueError("shape attribute must be specified")
         self.shape = shape
+        self.shape.share_parameters(self)
+
         if not ((gas_id is None) ^ (gas_name is None)):
             raise ValueError("Specifiy exactly one of gas_name or gas_id (not both!)")
         if gas_name is None:
@@ -196,10 +188,30 @@ class GasProfile(Profile):
         elif gas_id is None:
             self.gas_name = gas_name
             self.gas_id = constants.GASES.loc[constants.GASES.name == gas_name].radtrans_id.iloc[0]
-        self.label = self.gas_name
+        
+        if label is None:
+            self.label = self.gas_name
 
     def __repr__(self):
         return f"<GasProfile {self.gas_name} [{self.create_nemesis_string()}]>"
+
+    def _get_displayable_attributes(self):
+        def sort_key(name):
+            prefix = name.startswith("retrieved_")
+            error = name.endswith("_error")
+            return (prefix * 2 + error, name)
+        
+        groups = defaultdict(list)
+
+        # Populate dictionary
+        for name in self.__dict__:
+            core_name = re.sub(r"^retrieved_", "", name).split('_')[0]
+            groups[core_name].append(name)
+
+        # Convert to list of grouped names
+        grouped = [sorted(x, key=sort_key) for x in list(groups.values())]
+
+        return [g for g in grouped if g[0] not in ("label", "gas_id", "isotope_id", "retrieved", "core")]
 
     def _create_profile_from_previous_retrieval(prev_profile):
         return GasProfile(gas_name=prev_profile.gas_name, isotope_id=prev_profile.isotope_id, shape=prev_profile.shape, label=prev_profile.label)
@@ -236,34 +248,58 @@ class AerosolProfile(Profile):
                  shape, 
                  radius, 
                  variance,
-                 refractive_index, 
+                 real_n,
+                 imag_n, 
                  retrieve_optical=False, 
                  radius_error=None,
                  variance_error=None,
-                 imag_refractive_index_error=None,
-                 **kwargs):
+                 imag_n_error=None,
+                 label=None):
         """Create a profile for a given aerosol with a given shape
         
         Args:
             shape: A Shape object to use for the profile shape
             label: (optional) An arbitrary label to associate with this profile"""
             
-        super().__init__(**kwargs)
+        super().__init__(label=label)
+        if label is None:
+            self.label = f"Aerosol {self.aerosol_id}"
+
         self.aerosol_id = "UNASSIGNED"
         self.shape = shape
+        self.shape.share_parameters(self)
 
         self.radius = radius
         self.variance = variance
-        self.refractive_index = refractive_index
+        self.real_n = real_n
+        self.imag_n = imag_n
         self.retrieve_optical = retrieve_optical
 
         if retrieve_optical:
             self.radius_error = radius_error
             self.variance_error = variance_error
-            self.imag_refractive_index_error = imag_refractive_index_error
+            self.imag_n_error = imag_n_error
 
     def __repr__(self):
         return f"<AerosolProfile {self.aerosol_id} [{self.create_nemesis_string()}]>"
+
+    def _get_displayable_attributes(self):
+        def sort_key(name):
+                prefix = name.startswith("retrieved_")
+                error = name.endswith("_error")
+                return (prefix * 2 + error, name)
+        
+        groups = defaultdict(list)
+
+        # Populate dictionary
+        for name in self.__dict__:
+            core_name = re.sub(r"^retrieved_", "", name).split('_')[0]
+            groups[core_name].append(name)
+
+        # Convert to list of grouped names
+        grouped = [sorted(x, key=sort_key) for x in list(groups.values())]
+
+        return [g for g in grouped if g[0] not in ("label", "retrieved", "core", "aerosol_id")]
 
     def create_nemesis_string(self):
         """Create the NEMESIS code that represents the aerosol profile (eg. -1 0 32)
@@ -283,7 +319,9 @@ class AerosolProfile(Profile):
             
         Returns:
             str: The string to write to the .apr file"""
+        
         aerosol_part = self.create_nemesis_string() + f" - {self.label}\n" + self.shape.generate_apr_data()
+
         if self.retrieve_optical:
             imagn_part = f"\n444 {self.aerosol_id} 444 - {self.label}\ncloudf{self.aerosol_id}.dat"
             return aerosol_part + imagn_part
@@ -306,16 +344,10 @@ class AerosolProfile(Profile):
             utils.write_nums(file, self.radius, self.radius_error)
             utils.write_nums(file, self.variance, self.variance_error)
             file.write(f"{nwave}    -1\n")
-            utils.write_nums(file, refwave, self.refractive_index.real)
+            utils.write_nums(file, refwave, self.real_n)
             utils.write_nums(file, refwave)
             for line in lines:
                 vals = line.split()
                 if len(vals) < 2:
                     continue
-                utils.write_nums(file, float(vals[0]), self.refractive_index.imag, self.imag_refractive_index_error)
-    
-    def get_name(self):
-        if self.label is None:
-            return f"Aerosol {self.aerosol_id}"
-        else:
-            return self.label
+                utils.write_nums(file, float(vals[0]), self.imag_n, self.imag_n_error)

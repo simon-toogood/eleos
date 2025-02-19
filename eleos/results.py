@@ -75,8 +75,8 @@ class NemesisResult:
     def _read_mre(self):
         mre = parsers.NemesisMre(self.core_directory / "nemesis.mre")
         self.__dict__ |= mre.__dict__
-        for profile, df in zip(self.profiles, mre.retrieved_parameters):
-            profile._add_result(df)
+        for df in mre.retrieved_parameters:
+            print(df)
 
     def _read_aerosol_prf(self):
         header = ["height"] + [f"aerosol_{x}" for x in range(1, self.core.num_aerosol_modes+1)]
