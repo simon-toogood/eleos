@@ -1,4 +1,7 @@
-"""This module contains the classes for creating Profile objects."""
+"""This module contains the classes for creating Profile objects. There are currently 3 profiles available through Eleos:
+temperature (TemperatureProfile)
+gases (GasProfile)
+aerosols (AerosolProfile)"""
 
 from collections import defaultdict
 from pathlib import Path
@@ -273,7 +276,7 @@ class AerosolProfile(Profile):
             self.radius_error = radius_error
             self.variance_error = variance_error
             self.imag_n_error = imag_n_error
-            self.NAMES = self.NAMES + ["radius", "variance", "imag_n"]
+            self.NAMES = self.shape.NAMES + ["radius", "variance", "imag_n"]
 
     def __repr__(self):
         return f"<AerosolProfile {self.aerosol_id} [{self.create_nemesis_string()}]>"

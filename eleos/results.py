@@ -70,22 +70,24 @@ class NemesisResult:
         self.core = cores.load_core(self.core_directory)
         self.profiles = self.core.profiles
 
-        # Add results to the profiles
-        self._add_results_to_profiles()
-
         # Parse some files
         self.mre = parsers.NemesisMre(self.core_directory / "nemesis.mre")
-        self.itr = parsers.NemesisItr(self.core_directory / "nemesis.itr")
         self.aerosol_prf = parsers.AerosolPrf(self.core_directory / "aerosol.prf")
         self.nemesis_prf = parsers.NemesisPrf(self.core_directory / "nemesis.prf")
-        self.itr.add_column_names(self.profiles)
         self.aerosol_prf.data["pressure"] = self.nemesis_prf.data["pressure"]
+
+        if not self.core.forward:
+            self.itr = parsers.NemesisItr(self.core_directory / "nemesis.itr")
+            self.itr.add_column_names(self.profiles)
 
         # Add the mre object attributes to the NemesisResult object for convenience
         self.__dict__ |= self.mre.__dict__
         self.retrieved_aerosols = self.aerosol_prf.data
         self.retrieved_gases = self.nemesis_prf.data
         self.chi_sq = self.get_chi_sq()
+
+        # Add results to the profiles
+        self._add_results_to_profiles()
 
         # Set some misc params
         self._time = None
@@ -351,7 +353,10 @@ class NemesisResult:
         Returns:
             matplotlib.Figure: The Figure object to which the Axes belong
             matplotlib.Axes: The Axes object onto which the data was plotted"""
-                            
+
+        if self.core.forward:
+            raise TypeError("Forward models cannot have interations plotted")
+
         data = self.itr.state_vectors
 
         nrows = int(np.ceil(np.sqrt(len(data.columns))))

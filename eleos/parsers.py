@@ -30,9 +30,7 @@ class NemesisRef:
             lines = file.read().split("\n")
             if self._extra_header:
                 del lines[1]
-        
-        print(lines[:10])
-        
+                
         self.amform, = utils.get_ints_from_string(lines[0])
         planet_id, latitude, num_layers, num_gases = utils.get_floats_from_string(lines[1])
         self.planet_id = int(planet_id)
