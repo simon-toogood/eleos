@@ -87,6 +87,9 @@ class NemesisResult:
         self.retrieved_gases = self.nemesis_prf.data
         self.chi_sq = self.get_chi_sq()
 
+        # Set some misc params
+        self._time = None
+
     def _add_results_to_profiles(self):
         for label, profile in self.profiles.items():
             if isinstance(profile, profiles.AerosolProfile) and profile.retrieve_optical:
@@ -145,10 +148,13 @@ class NemesisResult:
     @property
     def elapsed_time(self):
         """Return the time taken for the retrieval in hours"""
-        with open(self.core_directory / "nemesis.prc") as file:
-            lines = file.read().splitlines()
-            time = float(re.findall(r"[-+]?\d*\.\d+|\d+", lines[-1])[0])
-        return time / 3600
+        if self._time is None:
+            with open(self.core_directory / "nemesis.prc") as file:
+                lines = file.read().splitlines()
+                time = float(re.findall(r"[-+]?\d*\.\d+|\d+", lines[-1])[0])
+            return time / 3600
+        else:
+            return self._time
 
     @plotting
     def plot_chisq(self, ax):
@@ -250,11 +256,11 @@ class NemesisResult:
             if unit == "tau/bar":
                 # only god himself knows whats going on with these units...
                 self.retrieved_aerosols[name] *= 1e5 / 10 / utils.get_planet_gravity(self.core.planet)
-                unit_label = "Optical thickness / bar"
-            elif unit == "cm2/g":
-                unit_label = "Aerosol cross-section (cm$^2$ / g)"
+                unit_label = f"Optical thickness / bar at {self.core.reference_wavelength:.2f}µm"
+            elif unit == "particles/g":
+                unit_label = f"Aerosol specific density (particles / gram) at {self.core.reference_wavelength:.2f}µm)"
             else:
-                raise ValueError("Invalid unit! - Must be one of 'tau/bar', 'cm2/g'")
+                raise ValueError("Invalid unit! - Must be one of 'tau/bar', 'particles/g'")
 
             # Get a label to use as the legend label - either the custom label or aerosol_<ID>
             id = int(name.removeprefix("aerosol_"))

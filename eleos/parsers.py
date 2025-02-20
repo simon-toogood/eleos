@@ -151,6 +151,11 @@ class NemesisXsc:
 
 
 class AerosolPrf:
+    """Parser for the aerosol.prf file
+    
+    Attributes:
+        data: pd.DataFrame containing the aerosol density asa function of height. The units of aerosol density are particles per gram of atmosphere"""
+    
     def __init__(self, filepath):
         self.filepath = Path(filepath)
         self.read()

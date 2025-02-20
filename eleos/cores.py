@@ -55,12 +55,12 @@ class NemesisCore:
             num_iterations (int):         Number of iterations to run in the retrieval (if forward is set this has no effect)
             num_layers (int):             The number of atmospheric layers to simulate
             bottom_layer_height (int):    The height in km of the bottom of the atmosphere (by defauylt use the lowest height in the .ref file)
-            instrument_ktables (str):     Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use
+            instrument_ktables (str):     Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use.
             fmerror_factor (float):       The factor by which to multiply the error on the spectrum (see also, fmerror_pct and fmerror_value)
             fmerror_pct (float):          If given, instead of using fmerror_factor or fmerror_value, use a flat percentage of the brightness (eg. 0.1 = 10%) (see also, fmerror_factor and fmerror_value)
             fmerror_value (float):        If given, instead of using fmerror_factor or fmerror_pct, use a flat value in W/cm2/sr/um (see also, fmerror_factor and fmerror_pct)
             cloud_cover (bool):           If scattering mode is on, then this is the fractional cloud cover between 0 and 1 (usually doesn't need to be changed)
-            reference_wavelength (float): If scattering mode is on, then normalise the cross-sections at this wavelength.
+            reference_wavelength (float): If scattering mode is on, then normalise the cross-sections at the closest wavelength to this value in the .xsc file. This parameter will be updated with the exact wavelength
         """
         # Increment the global core counter and store local version
         global CORE_ID_COUNTER
@@ -89,7 +89,7 @@ class NemesisCore:
         os.makedirs(self.parent_directory, exist_ok=True)
         if os.path.exists(self.directory) and prompt_if_exists:
             if os.path.exists(self.directory / "nemesis.mre"):
-                msg = "There is already a core that has already been run in"
+                msg = "There is already a core that has been run in"
             elif os.path.exists(self.directory / "nemesis.ref"):
                 msg = "There is already a core that has not been run yet in"
             else:
@@ -380,8 +380,6 @@ class NemesisCore:
             None
         
         Creates:
-            makephase.inp
-            normxsc.inp
             nemesis.xsc
             PHASE{N}.DAT
             hgphase{n}.dat"""
@@ -395,7 +393,8 @@ class NemesisCore:
         start_wl = min(wls) - 0.1
         end_wl = max(wls) + 0.1
         if self.reference_wavelength is not None:
-            ref_wl_idx, _ = utils.find_nearest(wls, self.reference_wavelength)
+            ref_wl_idx, ref_wl = utils.find_nearest(wls, self.reference_wavelength)
+            self.reference_wavelength = ref_wl
         else:
             ref_wl_idx = 0
             self.reference_wavelength = start_wl
