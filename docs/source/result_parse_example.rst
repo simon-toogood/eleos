@@ -1,6 +1,6 @@
 Result Parsing
 *********************
 
-.. literalinclude:: ../../example_result_parsing.py
+.. literalinclude:: ../../examples/single_result_parsing.py
    :language: python
    :linenos:

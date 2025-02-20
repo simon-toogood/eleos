@@ -18,9 +18,8 @@ View the results of NEMESIS retrievals
    core_gen_example
    result_parse_example
 
-
 .. toctree::
-   :maxdepth: 2
+   :maxdepth: 4
    :caption: API Reference
 
    documentation

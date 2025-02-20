@@ -51,7 +51,7 @@ class NemesisResult:
     Attributes:
         core_directory (str):                   The directory of the core being analysed
         core (NemesisCore):                     The NemesisCore object that generated the core directory
-        profiles (list[Profile]):               A list of all the retrieved Profile objects from the run
+        profiles (dict[Profile]):               A dictionary of all the retrieved Profile objects from the run. The keys are the labels given to the Profiles on creation (eg. GasProfiles have the form "<gas_name> <isotope_id>" such as "PH3 0")
         latitude (float):                       Latitude of the observed spectrum
         longitude (float):                      Longitude of the observed spectrum
         chi_sq (float):                         The chi-squared value of the retrieval
@@ -59,12 +59,7 @@ class NemesisResult:
         retrieved_aerosols (pandas.DataFrame):  A DataFrame containing the retrieved aerosol profiles
         retrieved_gases (pandas.DataFrame):     A DataFrame containing the retrieved chemical profiles
 """
-    def __init__(self, core_directory):
-        """Inititalise a NemesisResult class
-        
-        Args:
-            core_directory: The directory of a single core"""
-        
+    def __init__(self, core_directory):    
         # Load core directory
         self.core_directory = Path(core_directory)
         self.core = cores.load_core(self.core_directory)

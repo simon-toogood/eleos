@@ -2,58 +2,59 @@
 #
 # For the full list of built-in configuration values, see the documentation:
 # https://www.sphinx-doc.org/en/master/usage/configuration.html
+import datetime
+import os
+import sys
+from pathlib import Path
+
+import sphinx_rtd_theme
+
+print()
+
+sys.path.insert(0, Path("../../eleos").resolve())  # Adjust if needed
+
+import planetmapper
+from planetmapper.common import __version__
 
 # -- Project information -----------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#project-information
-
-import sys
-import os
-import sphinx_rtd_theme
-
-
-def patch_automodapi(app):
-    """Monkey-patch the automodapi extension to exclude imported members"""
-    from sphinx_automodapi import automodsumm
-    from sphinx_automodapi.utils import find_mod_objs
-    automodsumm.find_mod_objs = lambda *args: find_mod_objs(args[0], onlylocals=True)
-
-
-def setup(app):
-    app.connect("builder-inited", patch_automodapi)
-
 
 project = 'eleos'
 copyright = '2024, Simon Toogood'
 author = 'Simon Toogood'
 release = 'Alpha'
-
-sys.path.insert(0, os.path.abspath('../..'))
+version = __version__
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
 
 extensions = [
-#    'sphinx.ext.autodoc',	        # To generate autodocs
-    'sphinx.ext.mathjax',           # autodoc with maths
-    'sphinx.ext.napoleon',          # For auto-doc configuration
-    'sphinx.ext.coverage',
+    'sphinx.ext.autodoc',
+    'sphinx.ext.napoleon',
+    'sphinx.ext.viewcode',
+    'sphinx.ext.intersphinx',
+    'sphinx_rtd_theme',
     'sphinx.ext.autosummary',
-    "sphinx_rtd_theme",
-    "sphinx_automodapi.automodapi"  
 ]
-numpydoc_show_class_members = False
-autodoc_inherit_docstrings = False
-
-#autosummary_generate = True  # Turn on sphinx.ext.autosummary
 
 templates_path = ['_templates']
-exclude_patterns = []
+exclude_patterns = ['_build', 'Thumbs.db', '.DS_Store']
 
-napoleon_google_docstring = True   # Turn on googledoc strings
-napoleon_numpy_docstring = False     # Turn off numpydoc strings
-napoleon_use_ivar = True 	     # For maths symbology
+default_role = 'code'
+master_doc = 'index'
 
-autoclass_content = 'both'
+intersphinx_mapping = {
+    'python': ('https://docs.python.org/3', None),
+    'matplotlib': ('https://matplotlib.org/stable', None),
+    'numpy': ('https://numpy.org/doc/stable', None),
+}
+
+# Autodoc
+autodoc_member_order = 'bysource'
+# autoclass_content = 'both'
+# autodoc_typehints = 'both'
+# autodoc_typehints_description_target = 'documented_params'
+autodoc_inherit_docstrings = False
 
 
 # -- Options for HTML output -------------------------------------------------
@@ -61,4 +62,8 @@ autoclass_content = 'both'
 
 html_theme = 'sphinx_rtd_theme'
 html_static_path = ['_static']
-
+# html_extra_path = ['google065a4d650d8ee82d.html']
+# html_logo = 'images/logo_rtd_transparent.png'
+html_theme_options = {
+    'logo_only': True,
+}

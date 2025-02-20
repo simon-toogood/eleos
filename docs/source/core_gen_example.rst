@@ -1,6 +1,6 @@
 Core Generation
 *****************
 
-.. literalinclude:: ../../example_core_creation.py
+.. literalinclude:: ../../examples/single_core_creation.py
    :language: python
    :linenos:
