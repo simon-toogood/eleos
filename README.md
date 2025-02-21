@@ -1,6 +1,6 @@
 # Eleos - A Python interface to NEMESIS
 
-Please note, this is a WIP project and features may be added/removed at any time. It is absolutely *not* guarunteed to be backward compatible until it has matured significantly
+Please note, this is a WIP project and features may be added/removed at any time. It is absolutely *not* guarunteed to be backward compatible until it has matured significantly.
 
 ## Documentation
 

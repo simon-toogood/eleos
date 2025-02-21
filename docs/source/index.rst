@@ -1,14 +1,25 @@
-eleos
+Eleos
 *****
 
-A Python interface to the NEMESIS spectral inversion tool.
+A Python interface to the NEMESIS spectral inversion tool, designed for retrievals in the near- and mid-IR of the Gas Giants.
 
-Features
-========
+Eleos can generate the files required for a NEMESIS retrieval using an object-oriented interface, and uses the same interface for analysing the results of a completed retrieval.
 
-Create NEMESIS core directories 
+Once an Eleos-generated retrieval has been run, Eleos will generate a summary plot, showing:
+- the retrieved spectrum and its errors
+- the model residuals
+- the chi-squared value as a function of iteration number
+- the aerosol profiles that were retrieved
+- the gas profiles that were retrieved
 
-View the results of NEMESIS retrievals
+.. image:: images/summary.png
+   :width: 600
+
+Eleos will also generate a plotof all the model parameters and how they changed over the run. This can be useful for dianosing problems, or forverifying that a retrieval has converged correctly
+
+
+.. image:: images/iterations.png
+   :width: 600
 
 
 .. toctree::
