@@ -139,8 +139,8 @@ class NemesisResult:
         print(f"Time taken: {utils.format_decimal_hours(self.elapsed_time)}")
         print(f"Chi squared value: {self.chi_sq}")
         
-        for p in self.profiles:
-           print(p)
+        for name, profile in self.profiles.items():
+           print(profile)
 
     @property
     def elapsed_time(self):
@@ -188,14 +188,16 @@ class NemesisResult:
 
     @plotting
     def plot_spectrum_residuals(self, ax):
-        #ax.plot(self.retrieved_spectrum.wavelength, self.retrieved_spectrum.measured, lw=0.5, label="Measured")
-        residuals = (self.retrieved_spectrum.model - self.retrieved_spectrum.measured) / self.retrieved_spectrum.measured
+        residuals = np.log(self.retrieved_spectrum.model) - np.log(self.retrieved_spectrum.measured)
 
-        ax.plot(self.retrieved_spectrum.wavelength, residuals, label="Residuals")
-        ax.fill_between(self.retrieved_spectrum.wavelength, -self.retrieved_spectrum.error / self.retrieved_spectrum.measured, self.retrieved_spectrum.error / self.retrieved_spectrum.measured, alpha=0.5, label="Error")
-
+        ax.plot(self.retrieved_spectrum.wavelength, residuals, label="Residuals", lw=1)
+        ax.fill_between(self.retrieved_spectrum.wavelength,
+                         -self.retrieved_spectrum.error / self.retrieved_spectrum.measured, 
+                         self.retrieved_spectrum.error / self.retrieved_spectrum.measured, 
+                         alpha=0.5, label="Error")
+        ax.axhline(y=0, zorder=-1, c="k", ls="dashed")
         ax.set_xlabel("Wavelength (μm)")
-        ax.set_ylabel("Residuals / Measurement")
+        ax.set_ylabel("Log Residuals")
         ax.legend()
 
     @plotting_altitude
@@ -274,7 +276,7 @@ class NemesisResult:
         ax.legend()
 
     @plotting_altitude
-    def plot_gas_profiles(self, ax, pressure, gas_names=None, include_priors=False):
+    def plot_gas_profiles(self, ax, pressure, gas_names=None, include_priors=True):
         """Plot gas profiles from the .prf file.
 
         Args:
@@ -300,7 +302,7 @@ class NemesisResult:
         for i, gas_name in enumerate(gas_names):
             ax.plot(self.retrieved_gases[gas_name], y, label=gas_name, c=colors[i])
             if include_priors:
-                ax.plot(self.core.ref.data[gas_name], y2, label=f"{gas_name} Prior", c=colors[i])
+                ax.plot(self.core.ref.data[gas_name], y2, label=f"{gas_name} Prior", c=colors[i], ls="dashed")
         
         # Set a limit on lowest VMR
         x1, x2 = ax.get_xlim()

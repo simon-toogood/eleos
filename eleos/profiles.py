@@ -37,7 +37,16 @@ class Profile:
                 except:
                     data[-1].append("NA")
         
-        return utils.generate_ascii_table(self.label, headers, [n[0] for n in names], data)
+        return utils.generate_ascii_table(f"{self.label} {self.shape}", headers, [n[0] for n in names], data)
+
+    def __setattr__(self, name, value):
+        # Override the setattr method to allow sharing of attributes between the Profile and Shape objects for convenience
+        try:
+            if hasattr(self.shape, name):
+                setattr(self.shape, name, value)
+        except AttributeError:
+            pass
+        return super().__setattr__(name, value)
 
     @classmethod
     def from_previous_retrieval(cls, core_directory, label=None):
@@ -189,7 +198,7 @@ class GasProfile(Profile):
         # Convert to list of grouped names
         grouped = [sorted(x, key=sort_key) for x in list(groups.values())]
 
-        return [g for g in grouped if g[0] not in ("label", "gas_id", "isotope_id", "retrieved", "core")]
+        return [g for g in grouped if g[0] not in ("label", "gas_id", "isotope_id", "retrieved", "core", "shape")]
 
     def _create_profile_from_previous_retrieval(prev_profile):
         return GasProfile(gas_name=prev_profile.gas_name, isotope_id=prev_profile.isotope_id, shape=prev_profile.shape, label=prev_profile.label)
@@ -297,7 +306,7 @@ class AerosolProfile(Profile):
         # Convert to list of grouped names
         grouped = [sorted(x, key=sort_key) for x in list(groups.values())]
 
-        return [g for g in grouped if g[0] not in ("label", "retrieved", "core", "aerosol_id")]
+        return [g for g in grouped if g[0] not in ("label", "retrieved", "core", "aerosol_id", "NAMES", "retrieve_optical", "shape")]
 
     def _add_result(self, df, df_444=None):
         """Take in a DataFrame created by reading in the .mre file (results.NemesisResult.read_mre) and assign the correct attributes
