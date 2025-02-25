@@ -5,6 +5,7 @@ import os
 import re
 
 
+
 # NumPy extension functions
 
 def find_nearest(array, value):
@@ -66,27 +67,25 @@ def write_nums(file, *nums, sep="    ", dp=6):
 
 
 def generate_ascii_table(title, headers, row_headers, rows):
-    """Create a text-based table with a header column using Unicode box drawing characters.
-
-    Args:
-        headers (list): A list of column headers.
-        row_headers (list): A list of row header labels (one for each row).
-        rows (list of list): A list of rows, where each row is a list of column values.
-        top_left (str): The string to place in the top-left cell (default is empty).
-
-    Returns:
-        str: The formatted table as a string.
-    """
-    # Add the top-left string to the headers
     headers = [title] + headers
-
-    # Determine the column widths, including the row header column
     num_columns = len(headers)
-    col_widths = [max(len(str(row[i])) for row in rows) for i in range(len(headers) - 1)]
-    col_widths.insert(0, max(len(str(h)) for h in row_headers))  # Row header column
-    col_widths = [max(col_widths[i], len(headers[i])) for i in range(num_columns)]
 
-    # Box drawing characters
+    # Calculate column widths (based on *stripped* text)
+    data_col_widths = [
+        max(len(remove_ansi_colors(row[i])) for row in rows)
+        for i in range(len(headers) - 1)
+    ]
+    # Insert row-header column
+    data_col_widths.insert(
+        0, max(len(remove_ansi_colors(h)) for h in row_headers)
+    )
+    # Ensure column is at least as wide as the header text
+    data_col_widths = [
+        max(data_col_widths[i], len(remove_ansi_colors(headers[i])))
+        for i in range(num_columns)
+    ]
+
+    # Box drawing
     top_left_corner = "┌"
     top_right_corner = "┐"
     bottom_left_corner = "└"
@@ -97,29 +96,75 @@ def generate_ascii_table(title, headers, row_headers, rows):
     cross_middle = "┼"
     cross_bottom = "┴"
 
-    # Helper to create rows
+    def pad_cell(cell_text, col_index):
+        """
+        1) Measure visible length by stripping ANSI codes.
+        2) Add trailing spaces to match `data_col_widths[col_index]`.
+        3) If the cell is wrapped in a single color code at the start
+           and a reset code at the end, include the spaces *inside* that.
+        """
+        stripped = remove_ansi_colors(cell_text)
+        pad_length = data_col_widths[col_index] - len(stripped)
+
+        # If there's no padding needed or no color code, just do normal pad:
+        if pad_length <= 0:
+            return cell_text
+
+        # Regex to see if the cell starts with some ANSI color code
+        # and ends with a reset code.  This is a *naive* approach:
+        #   - Looks for something like "\x1b[...m" at start
+        #   - Looks for "\x1b[0m" at end
+        # If both exist, we insert spaces before the final reset.
+        # Otherwise, just append spaces normally.
+        pattern_start = re.compile(r'^(?:\x1B\[.*?m)(.*)', re.DOTALL)
+        pattern_end = re.compile(r'(.*)(?:\x1B\[0m)$', re.DOTALL)
+
+        match_start = pattern_start.match(cell_text)
+        match_end = pattern_end.match(cell_text)
+
+        if match_start and match_end:
+            # The cell starts with some color code and ends with a reset code
+            # We'll keep them, and insert spaces *inside* those codes.
+            # e.g. "\033[31mTEXT\033[0m" => "\033[31mTEXT    \033[0m"
+            start_color = cell_text[: match_start.start(1)]  # up to first text
+            end_reset = cell_text[match_end.end(1) :]        # from last text to end
+            middle_text = match_start.group(1)
+            # Now add spaces
+            middle_text += " " * pad_length
+            # Reconstruct
+            return f"{start_color}{middle_text}{end_reset}"
+        else:
+            # Not a simple wrap; just add trailing spaces as normal
+            return cell_text + (" " * pad_length)
+
+    # Helpers for drawing
     def make_row(cells, left, middle, right):
-        return f"{left} " + f" {middle} ".join(f"{str(cell):<{col_widths[i]}}" for i, cell in enumerate(cells)) + f" {right}"
+        padded_cells = [pad_cell(str(c), i) for i, c in enumerate(cells)]
+        return f"{left} " + f" {middle} ".join(padded_cells) + f" {right}"
 
-    # Header separator
     def make_separator(left, middle, right):
-        return f"{left}" + f"{middle}".join(horizontal * (col_widths[i] + 2) for i in range(num_columns)) + f"{right}"
+        return (
+            f"{left}"
+            + f"{middle}".join(horizontal * (data_col_widths[i] + 2)
+                               for i in range(num_columns))
+            + f"{right}"
+        )
 
-    # Build the table
-    table = [
-        make_separator(top_left_corner, cross_top, top_right_corner),  # Top border
-        make_row(headers, vertical, vertical, vertical),  # Header row
-        make_separator("├", cross_middle, "┤"),  # Separator under header
-    ]
+    # Build table
+    table = []
+    table.append(make_separator(top_left_corner, cross_top, top_right_corner))
+    table.append(make_row(headers, vertical, vertical, vertical))
+    table.append(make_separator("├", cross_middle, "┤"))
+
     for row_header, row in zip(row_headers, rows):
         table.append(make_row([row_header] + row, vertical, vertical, vertical))
-    table.append(make_separator(bottom_left_corner, cross_bottom, bottom_right_corner))  # Bottom border
 
+    table.append(make_separator(bottom_left_corner, cross_bottom, bottom_right_corner))
     return "\n".join(table)
 
 
 def get_floats_from_string(string):
-    pattern = R"[-+]?(?:\d*\.*\d+)"
+    pattern = r"[-+]?(?:\d*\.\d+|\d+)(?:[eE][-+]?\d+)?"
     floats = re.findall(pattern, string)
     return [float(x) for x in floats]
 
@@ -137,8 +182,8 @@ def format_decimal_hours(decimal_hours):
     return "%dh %02dm %02ds" % (hours, minutes, seconds)
 
 
-# PLanet data functions
-
-def get_planet_gravity(planet):
-    return {"jupiter": 24.79, "saturn": 10.44, "uranus": 8.69, "neptune": 11.15, "titan":1.352}[planet.lower()]
+def remove_ansi_colors(string):
+    ansi_escape = re.compile(r'\x1B(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])')
+    out = ansi_escape.sub('', str(string))
+    return out
 

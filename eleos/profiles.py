@@ -6,11 +6,13 @@ aerosols (AerosolProfile)"""
 from collections import defaultdict
 from pathlib import Path
 import re
+import numpy as np
 
 from . import constants
 from . import shapes
 from . import utils
 from . import results
+from . import parsers
 from . import spx
 
 
@@ -25,17 +27,33 @@ class Profile:
         if not self.retrieved:
             headers = ["Prior", "Error"]
         else:
-            headers = ["Prior", "Error", "Retrieved", "Error"]
+            headers = ["Prior", "Error", "Retrieved", "Error", "Change"]
 
         names = self._get_displayable_attributes()
         data = []
         for name_group in names:
             data.append([])
-            for i in range(len(headers)):
+
+            # Add prior (and retrieved) columns
+            for i in range(4 if self.retrieved else 2):
                 try:
                     data[-1].append(getattr(self, name_group[i]))
                 except:
-                    data[-1].append("NA")
+                    data[-1].append(" ")
+        
+            # Add the difference column
+            if self.retrieved:
+                try:
+                    pct_diff = 100*(getattr(self, name_group[2]) - getattr(self, name_group[0])) / getattr(self, name_group[0])
+                    if abs(pct_diff) > 100:
+                        color = "\x1b[41m"
+                    elif 20 < abs(pct_diff) <= 100:
+                        color = "\x1b[43m"
+                    elif abs(pct_diff) <= 20:
+                        color = "\x1b[42m"
+                    data[-1].append(f"{color}{pct_diff:+.1f}%\x1b[0m")
+                except:
+                    data[-1].append(" ")
         
         return utils.generate_ascii_table(f"{self.label} {self.shape}", headers, [n[0] for n in names], data)
 
@@ -148,7 +166,13 @@ class GasProfile(Profile):
                  isotope_id=0, 
                  shape=None, 
                  label=None):
-        """Create a profile for a given gas (optionally an isotopologue) with a given shape
+        """Create a profile for a given gas (optionally an isotopologue) with a given shape. Call signatures:
+
+        Create profile with the name of the gas (ie 'NH3')
+        GasProfile(gas_name, isotope_id, shape)
+
+        Create profile with the ID of the gas (eg. 11)
+        GasProfile(gas_id, isotope_id, shape)
         
         Args:
             gas_name (str): The name of the gas (eg 'CH4'). Specify either this OR gas_id
@@ -254,38 +278,74 @@ class AerosolProfile(Profile):
                  shape, 
                  radius, 
                  variance,
-                 real_n,
-                 imag_n, 
+                 n_lookup=None,
+                 real_n=None,
+                 imag_n=None, 
                  retrieve_optical=False, 
                  radius_error=None,
                  variance_error=None,
                  imag_n_error=None,
                  label=None):
-        """Create a profile for a given aerosol with a given shape
+        """Create a profile for an aerosol layer with a given shape and particle/optical properties. Call signatures:
+
+        Constant refractive index over range (not retrieved):
+        AerosolProfile(shape, radius, variance, real_n, imag_n)
+
+        Constant refractive index over range (retrieved):
+        AerosolProfile(shape, radius, radius_error, variance, variance_error, real_n, imag_n, imag_n_error)
+
+        Use refractive index from lookup table (not retrieved):
+        AerosolProfile(shape, radius, variance, n_lookup)
+
+        Use refractive index from lookup table (retrieved):
+        AerosolProfile(shape, radius, radius_error, variance, variance_error, n_lookup)
         
         Args:
+            label (str): A label to assosiate with this profile
             shape (Shape): A Shape object to use for the profile shape
-            label (str): A label to associate with this Profile. By default it is "Aerosol <aerosol_id>" (eg. "Aerosol 1") """            
-        
+            label (str): A label to associate with this Profile. By default it is "Aerosol <aerosol_id>" (eg. "Aerosol 1")       
+            shape (Shape): A Shape object that describes the profile shape
+            radius (float): Particle radius in microns
+            variance (float): Varaince of the particle size distribution in microns (gamma distribution)
+            n_lookup (str): If given, use the refractive indicies of this gas (eg. 'CH4')
+            real_n (float): If n_lookup is not given, then use this as the real part of the refractive index
+            imag_n (float): If n_lookup is not given, then use this as the imaginary part of the refractive index,
+            retrieve_optical (bool): Whether to retrieve the optical porperties of the aerosol (this adds a 444 profile in NEMESIS)
+            radius_error (float): If retrieve_optical is set, the error used for the particle radius prior
+            variance_error (float): If retrieve_optical is set, the error used for the particle size variance prior
+            imag_n_error (float): If retrieve_optical is set, the error used for the imaginary part of the refractive index
+             """
+
         super().__init__(label=label)
         if label is None:
             self.label = f"Aerosol {self.aerosol_id}"
 
+        # Assign basic parameters
         self.aerosol_id = "UNASSIGNED"
         self.shape = shape
         self.shape.share_parameters(self)
-
-        self.radius = radius
-        self.variance = variance
-        self.real_n = real_n
-        self.imag_n = imag_n
         self.retrieve_optical = retrieve_optical
 
+        # Set particle properties
+        self.radius = radius
+        self.variance = variance
+
+        # Set either n_lookup or ral_n and imag_n
+        if n_lookup is None:
+            self.real_n = real_n
+            self.imag_n = imag_n
+            self.lookup = False
+        else:
+            self.n_lookup = n_lookup
+            self.lookup = True
+
+        # Set the prior errors if retrieving
         if retrieve_optical:
             self.radius_error = radius_error
             self.variance_error = variance_error
             self.imag_n_error = imag_n_error
-            self.NAMES = self.shape.NAMES + ["radius", "variance", "imag_n"]
+
+        self.NAMES = self.shape.NAMES + ["radius", "variance", "imag_n", "n_lookup"]
 
     def __repr__(self):
         return f"<AerosolProfile {self.aerosol_id} [{self.create_nemesis_string()}]>"
@@ -371,25 +431,29 @@ class AerosolProfile(Profile):
             return aerosol_part
 
     def _generate_cloudfn_dat(self, directory):
-        # Get first wavelength
         directory = Path(directory)
-        wl = spx.read(directory / "nemesis.spx").geometries[0].wavelengths[0]
 
-        # Get number of wavelengths in xsc file
-        with open(directory / "nemesis.xsc") as file:
-            lines = file.read().split("\n")
-            nwave = (len(lines)-2) // 2
-            refwave = float(lines[1].split()[0])
-        
+        # Get the wavelengths in the xsc file
+        xsc_parser = parsers.NemesisXsc(directory / "nemesis.xsc")
+        nwave = len(xsc_parser.xsc.wavelength)
+        refwave = self.core.reference_wavelength
+
+        # Get the refractive indicies in the Makephase output or from the given attributes
+        if self.lookup:
+            refindexes = parsers.MakephaseOut(directory / "makephase.out").data
+            imag_ns = refindexes[self.label + " imag"]
+            wi,_ = utils.find_nearest(refindexes.wavelength, refwave)
+            ref_real_n = refindexes[self.label + " imag"].iloc[wi]
+        else:
+            imag_ns = [self.imag_n for x in range(nwave)]
+            ref_real_n = self.real_n
+
         # Generate cloudfN.dat
         with open(directory / f"cloudf{self.aerosol_id}.dat", mode="w+") as file:
             utils.write_nums(file, self.radius, self.radius_error)
             utils.write_nums(file, self.variance, self.variance_error)
-            file.write(f"{nwave}    -1\n")
-            utils.write_nums(file, refwave, self.real_n)
+            file.write(f"{nwave}    {0 if self.lookup else -1}\n")
+            utils.write_nums(file, refwave, ref_real_n)
             utils.write_nums(file, refwave)
-            for line in lines:
-                vals = line.split()
-                if len(vals) < 2:
-                    continue
-                utils.write_nums(file, float(vals[0]), self.imag_n, self.imag_n_error)
+            for imag_n, wavelength in zip(imag_ns, xsc_parser.xsc.wavelength):
+                utils.write_nums(file, wavelength, imag_n, self.imag_n_error)

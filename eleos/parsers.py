@@ -146,13 +146,13 @@ class NemesisXsc:
         self.ssa.insert(0, column="wavelength", value=waves)
         self.xsc = pd.DataFrame(xscs)
         self.xsc.insert(0, column="wavelength", value=waves)
-
-
+            
+        
 class AerosolPrf:
     """Parser for the aerosol.prf file
     
     Attributes:
-        data: pd.DataFrame containing the aerosol density asa function of height. The units of aerosol density are particles per gram of atmosphere"""
+        data: pd.DataFrame containing the aerosol density as a function of height. The units of aerosol density are particles per gram of atmosphere"""
     
     def __init__(self, filepath):
         self.filepath = Path(filepath)
@@ -213,3 +213,42 @@ class NemesisItr:
             if isinstance(profile, profiles_.AerosolProfile):
                 names += [f"{label} radius", f"{label} variance", f"{label} imag_n"]
         self.state_vectors.columns = names
+
+
+class MakephaseOut:
+    def __init__(self, filepath):
+        self.filepath = Path(filepath)
+        self.read()
+
+    def read(self):
+        xsc = NemesisXsc(Path(self.filepath).parent / "nemesis.xsc")
+        wavelengths = xsc.xsc.wavelength
+
+        with open(self.filepath) as file:
+            isprev = False
+            start = False
+            out = []
+            for line in file:
+                if not isprev and not start:
+                    out.append([])
+                    start = True
+                if line.startswith(" Refractive index:"):
+                    isprev = True
+                    start = False
+                    out[-1].append(utils.get_floats_from_string(line))
+                else:
+                    isprev = False
+        
+        # Get the names of the aerosol layers
+        names = []
+        with open(Path(self.filepath).parent / "aerosol_names.txt") as file:
+            n = file.read().split("\n")
+            for m in n:
+                names.append(m + " real")
+                names.append(m + " imag")
+        
+        out = pd.DataFrame(np.hstack(out), columns=names)
+        out.insert(0, "wavelength", wavelengths)
+        self.data = out
+
+        

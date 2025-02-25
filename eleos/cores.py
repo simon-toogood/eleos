@@ -245,7 +245,7 @@ class NemesisCore:
 
         with open(constants.PATH / "data/statics/nemesis.set", mode="r") as file:
             out = file.read()
-        out = out.replace("<DISTANCE>", f"{constants.DISTANCES[self.planet]:.3f}")
+        out = out.replace("<DISTANCE>", f"{constants.DISTANCE[self.planet]:.3f}")
         out = out.replace("<SUNLIGHT>", f"{int(self.scattering)}")
         out = out.replace("<BOUNDARY>", f"{int(self.scattering)}")
         out = out.replace("<N_LAYERS>", f"{int(self.num_layers)}")
@@ -464,6 +464,15 @@ class NemesisCore:
             file.write(str(len(df)) + "\n")
             file.write(df.to_string(header=False, index=False))
 
+    def _append_to_makephase_inp(self, profile):
+        # Add the mode to the bottom of the Makephase input file
+            with open(self.directory / "makephase.inp", mode="a") as file:
+                file.write(f"1\n{profile.radius} {profile.variance}\n2\n")
+                if not profile.lookup:
+                    file.write(f"1\n{profile.real_n} {profile.imag_n}\n")
+                else:
+                    file.write(f"{constants.MAKEPHASE_GASES[profile.n_lookup]}\n")
+
     def _generate_summary(self):
         """Dump the information used to create the NEMESIS core to a human-readable text file
         
@@ -474,7 +483,9 @@ class NemesisCore:
             None
             
         Creates:
-            eleos_inputs.txt"""
+            eleos_inputs.txt
+            aerosol_names.txt"""
+        
         out = ""
         for k, v in self.__dict__.items():
             if k == "profiles":
@@ -491,6 +502,12 @@ class NemesisCore:
         with open(self.directory / "summary.txt", mode="w+") as file:
             file.write(out)
 
+        with open(self.directory / "aerosol_names.txt", mode="w+") as file:
+            for name, profile in self.profiles.items():
+                if isinstance(profile, profiles_.AerosolProfile):
+                    file.write(name + "\n")
+            file.truncate(file.tell() - 1)
+                
     def get_aerosol_profile(self, id=None):
         """Given an aerosol ID (positive, as used by NEMESIS) return the corresponding AerosolProfile object.
         
@@ -528,11 +545,18 @@ class NemesisCore:
             # Assign aerosol IDs
             profile.aerosol_id = self.num_aerosol_modes
 
-            # Add the mode to the bottom of the Makephase input file
-            with open(self.directory / "makephase.inp", mode="a") as file:
-                file.write(f"1\n{profile.radius} {profile.variance}\n2\n1\n{profile.real_n} {profile.imag_n}\n")
+            # Add profile data to makephase input file
+            self._append_to_makephase_inp(profile=profile)
 
     def generate_core(self):
+        """Create all the files necessary for a NEMESIS retrieval in the directory specified by NemesisCore.directory.
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
         print(f"Generating core {self.id_}")
 
         # Consistency check for aerosol mode ID - sometimes this screws up and I'm not sure why
@@ -543,6 +567,7 @@ class NemesisCore:
         if len(set(ids)) != len(ids):
             raise ValueError("Aerosol IDs are not consistent!")
 
+        self._generate_summary()
         self._generate_inp()
         self._generate_set()
         self._generate_flags()
@@ -553,10 +578,16 @@ class NemesisCore:
         self._generate_fcloud_ref()
         self._generate_xsc()
         self._generate_apr()
-        self._generate_summary()
         self._save_core()        
 
     def fix_peak(self, central_wavelength, width, error=1e-15):
+        """Set a region of the spectra to be fixed (ie. NEMESIS will be forced to match it). This is done internally by setting the
+        error on that region to be extrmemely small.
+        
+        Args:
+            central_wavelength (float): The central wavelength of the peak
+            width (float): The width of the spectral feature (this is a full width, so the region being fixed is centre-width/2 to centre+width/2)
+            error (float): Optionbally, give the error to be assigned to the region. This should be very small and there is not much need to change this"""
         self.fixed_peaks.append(FixedPeak(central_wavelength, width, error))
 
     def get_height_limits(self):
@@ -573,6 +604,18 @@ class NemesisCore:
         return min(heights), max(heights)
 
     def set_pressure_limits(self, min_pressure=None, max_pressure=None):
+        """Set the upper and lower pressure limits for the retrieval to consider
+        
+        Args:
+            min_pressure (float): The pressure at the top of the atmosphere
+            max_pressure (float): The pressure at the bottom of the atmosphere
+            
+        Returns:
+            None
+            
+        Creates:
+            pressure.lay"""
+        
         self.layer_type = 4
         self.min_pressure = min_pressure
         self.max_pressure = max_pressure

@@ -21,8 +21,22 @@ PATH = Path(os.path.dirname(__file__)) #: The absolute path of the prepackaged d
 
 GASES = _read_radtrans_gas_id() #: The database of gas names and IDs used by NEMESIS
 
-DISTANCES = {"jupiter": 5.2,
+DISTANCE = {"jupiter": 5.2,
              "saturn": 9.546,
              "uranus": 19.2,
              "neptune": 30.0,
-             "titan": 9.546,} #: The distnaces from the Sun for all the bodies with significant atmospheres
+             "titan": 9.546,} #: The distances from the Sun for all the bodies with significant atmospheres
+
+GRAVITY = {"jupiter": 24.79, 
+           "saturn": 10.44, 
+           "uranus": 8.69, 
+           "neptune": 11.15, 
+           "titan":1.352} #: The surface gravity for all the bodies with significant atmospheres
+
+MAKEPHASE_GASES = {"H2O": 3,
+                   "NH3": 4,
+                   "Tholins": 5,
+                   "CH4": 6,
+                   "NH4SH": 7,
+                   "N2H4": 8,
+                   "H2SO4": 9} #: The IDs used by Makephase for looking up refractive indicies of the gases

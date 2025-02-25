@@ -1,5 +1,6 @@
 import pandas as pd
 import matplotlib.pyplot as plt
+import matplotlib as mpl
 import shutil
 import re
 import itertools
@@ -254,7 +255,7 @@ class NemesisResult:
 
             if unit == "tau/bar":
                 # only god himself knows whats going on with these units...
-                self.retrieved_aerosols[name] *= 1e5 / 10 / utils.get_planet_gravity(self.core.planet)
+                self.retrieved_aerosols[name] *= 1e5 / 10 / constants.GRAVITY[self.core.planet]
                 unit_label = f"Optical thickness / bar at {self.core.reference_wavelength:.2f}µm"
             elif unit == "particles/g":
                 unit_label = f"Aerosol specific density (particles / gram) at {self.core.reference_wavelength:.2f}µm)"
