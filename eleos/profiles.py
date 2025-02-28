@@ -366,7 +366,7 @@ class AerosolProfile(Profile):
         # Convert to list of grouped names
         grouped = [sorted(x, key=sort_key) for x in list(groups.values())]
 
-        return [g for g in grouped if g[0] not in ("label", "retrieved", "core", "aerosol_id", "NAMES", "retrieve_optical", "shape")]
+        return [g for g in grouped if g[0] not in ("label", "retrieved", "core", "aerosol_id", "NAMES", "retrieve_optical", "shape", "lookup")]
 
     def _add_result(self, df, df_444=None):
         """Take in a DataFrame created by reading in the .mre file (results.NemesisResult.read_mre) and assign the correct attributes

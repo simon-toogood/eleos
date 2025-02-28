@@ -297,6 +297,9 @@ class NemesisResult:
         # If no gas names specififed then get every gas profile
         if gas_names is None:
             gas_names = [x for x in self.retrieved_gases.columns if x not in ("height", "pressure", "temp")]
+        # Allow passing in of a single string instead of a list
+        elif isinstance(gas_names, str):
+            gas_names = [gas_names]
         
         # Plot the profiles
         colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
@@ -386,7 +389,7 @@ class NemesisResult:
             None
         """
         x = plt if fig is None else fig
-        x.savefig(self.core_directory / "plots/" + name, bbox_inches="tight", **kwargs)
+        x.savefig(self.core_directory / "plots" / name, bbox_inches="tight", **kwargs)
 
     def delete(self, confirm=True):
         """Delete the NemesisResult object AND delete the corresponding core directory. This action is irreviersible!

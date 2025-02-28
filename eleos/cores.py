@@ -21,7 +21,34 @@ CORE_ID_COUNTER = 0
 
 
 class NemesisCore:
-    """The class that constructs a core directory and all the required files for NEMESIS to run."""
+    """The class that constructs a core directory and all the required files for NEMESIS to run.
+    
+    Attributes:
+        parent_directory (Path):      The directory in which the core directory is created
+        directory (Path):             The directory in which the core files are stored
+        id_ (int):                    The unique ID of the core
+        profiles (dict):              A dictionary of profiles.Profile objects to retrieve, where the keys are the profile labels and the values are the Profile objects themselves
+        spx_file (Path):              The path to the spectrum file to fit
+        ref_file (Path):              The path to the ref file to use
+        ref (parsers.NemesisRef):     The parsed ref file
+        planet (str):                 The name of the planet being observed
+        scattering (bool):            Whether to run a scattering retrieval or not
+        num_aerosol_modes (int):      The number of aerosol profiles in the retrieval
+        forward (bool):               Whether of not to run a forward model (ie. set number of iterations = 0)
+        num_iterations (int):         Number of iterations to run in the retrieval (if forward is set this has no effect)
+        num_layers (int):             The number of atmospheric layers to simulate
+        layer_type (int):             The type of layering to use 
+        min_pressure (float):         The minimum pressure in the atmosphere
+        max_pressure (float):         The maximum pressure in the atmosphere
+        bottom_layer_height (int):    The height in km of the bottom of the atmosphere (by defauylt use the lowest height in the .ref file)
+        fixed_peaks (list):           A list of FixedPeak objects that specify regions of the spectrum to fix
+        instrument_ktables (str):     Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use.
+        fmerror_factor (float):       The factor by which to multiply the error on the spectrum (see also, fmerror_pct and fmerror_value)
+        fmerror_pct (float):          If given, instead of using fmerror_factor or fmerror_value, use a flat percentage of the brightness (eg. 0.1 = 10%) (see also, fmerror_factor and fmerror_value)
+        fmerror_value (float):        If given, instead of using fmerror_factor or fmerror_pct, use a flat value in W/cm2/sr/um (see also, fmerror_factor and fmerror_pct)
+        cloud_cover (bool):           If scattering mode is on, then this is the fractional cloud cover between 0 and 1 (usually doesn't need to be changed)
+        reference_wavelength (float): If scattering mode is on, then normalise the cross-sections at the closest wavelength to this value in the .xsc file
+        """
     def __init__(self, 
                  parent_directory,
                  spx_file, 
@@ -155,6 +182,16 @@ class NemesisCore:
         return f"<NemesisCore: {self.directory}>"
 
     def _save_core(self):
+        """Dump the core object to a pickle file in the core directory
+        
+        Args:
+            None
+        
+        Returns:
+            None
+            
+        Creates:
+            core.pkl"""
         with open(self.directory / "core.pkl", mode="wb") as file:
             pickle.dump(self, file)
 
@@ -177,6 +214,20 @@ class NemesisCore:
         shutil.copy(sys.argv[0], self.directory / "eleos_generation.py")
 
     def _copy_template_files(self):
+        """Copy some boilerplate files from the library data directory into the core directory
+        
+        Args:
+            None
+            
+        Returns:
+            None
+            
+        Creates:
+            nemesis.cia
+            nemesis.abo
+            nemesis.nam
+            nemesis.sol
+            maskephase.inp"""
         shutil.copy(constants.PATH / "data/statics/nemesis.cia", self.directory)
         shutil.copy(constants.PATH / "data/statics/nemesis.abo", self.directory)
         shutil.copy(constants.PATH / "data/statics/nemesis.nam", self.directory)
@@ -390,15 +441,16 @@ class NemesisCore:
         
         # Read in wavelengths bounds from spx file
         wls = spx.read(self.spx_file).geometries[0].wavelengths
-        start_wl = min(wls) - 0.1
-        end_wl = max(wls) + 0.1
+        start_wl = round(min(wls) - 0.1, 1)
+        end_wl = round(max(wls) + 0.1, 1)
+        print(start_wl, end_wl)
         if self.reference_wavelength is not None:
             ref_wl_idx, ref_wl = utils.find_nearest(wls, self.reference_wavelength)
             self.reference_wavelength = ref_wl
         else:
             ref_wl_idx = 0
             self.reference_wavelength = start_wl
-            warnings.warn(f"No reference wavelength for aerosol cross-sections specified - using the shortest wavelength ({start_wl:4f}um)")
+            warnings.warn(f"No reference wavelength for aerosol cross-sections specified - using the shortest wavelength ({start_wl:1f}um)")
 
         # Replace the number of aerosol modes and start/end/delta wavelengths
         with open(self.directory / "makephase.inp", mode="r+") as file:
@@ -465,13 +517,23 @@ class NemesisCore:
             file.write(df.to_string(header=False, index=False))
 
     def _append_to_makephase_inp(self, profile):
-        # Add the mode to the bottom of the Makephase input file
-            with open(self.directory / "makephase.inp", mode="a") as file:
-                file.write(f"1\n{profile.radius} {profile.variance}\n2\n")
-                if not profile.lookup:
-                    file.write(f"1\n{profile.real_n} {profile.imag_n}\n")
-                else:
-                    file.write(f"{constants.MAKEPHASE_GASES[profile.n_lookup]}\n")
+        """Add the optical properties of an AerosolProfile to the Makephase input file
+        
+        Args:
+            profile (profiles.AerosolProfile): The profile to add
+            
+        Returns:
+            None
+            
+        Modifies:
+            makephase.inp"""
+        
+        with open(self.directory / "makephase.inp", mode="a") as file:
+            file.write(f"1\n{profile.radius} {profile.variance}\n2\n")
+            if not profile.lookup:
+                file.write(f"1\n{profile.real_n} {profile.imag_n}\n")
+            else:
+                file.write(f"{constants.MAKEPHASE_GASES[profile.n_lookup]}\n")
 
     def _generate_summary(self):
         """Dump the information used to create the NEMESIS core to a human-readable text file
@@ -500,6 +562,7 @@ class NemesisCore:
             out += "\n"
 
         with open(self.directory / "summary.txt", mode="w+") as file:
+            file.write(f"Generated: {time.asctime()}\n")
             file.write(out)
 
         with open(self.directory / "aerosol_names.txt", mode="w+") as file:
@@ -509,7 +572,7 @@ class NemesisCore:
             file.truncate(file.tell() - 1)
                 
     def get_aerosol_profile(self, id=None):
-        """Given an aerosol ID (positive, as used by NEMESIS) return the corresponding AerosolProfile object.
+        """Given an aerosol ID (as used by NEMESIS) return the corresponding AerosolProfile object.
         
         Args:
             id (int): The aerosol ID
@@ -518,16 +581,18 @@ class NemesisCore:
         Returns:
             AerosolProfile: The corresponding aerosol profile"""
 
+        id = abs(id)
+
         if id > self.num_aerosol_modes:
             raise IndexError(f"Aerosol index is too large! ({id} vs {self.num_aerosol_modes} max.)")
-        
+
         for profile in self.profiles.values():
             if isinstance(profile, profiles_.AerosolProfile):
                 if profile.aerosol_id == id:
                     return profile
 
     def add_profile(self, profile):
-        """Add a profile to retrieve
+        """Add a profile to retrieve. It's recommended to do this during instantiation using the profiles argument.
 
         Args:
             profile: profiles.Profile object to add
@@ -556,6 +621,9 @@ class NemesisCore:
             
         Returns:
             None
+
+        Creates:
+            See _generate_* methods
         """
         print(f"Generating core {self.id_}")
 
@@ -587,7 +655,11 @@ class NemesisCore:
         Args:
             central_wavelength (float): The central wavelength of the peak
             width (float): The width of the spectral feature (this is a full width, so the region being fixed is centre-width/2 to centre+width/2)
-            error (float): Optionbally, give the error to be assigned to the region. This should be very small and there is not much need to change this"""
+            error (float): Optionally, give the error to be assigned to the region. This should be very small and there is not much need to change this
+        
+        Returns:
+            None
+        """
         self.fixed_peaks.append(FixedPeak(central_wavelength, width, error))
 
     def get_height_limits(self):
@@ -673,8 +745,8 @@ def reset_core_numbering():
     CORE_ID_COUNTER = 0
 
 
-def clear_parent_directory(parent_directory, prompt_if_exists=True):
-    """Attempt to delete all the child files/direcotries from the specified folder. It is recommended to call this function at the start
+def clear_parent_directory(parent_directory, confirm=True):
+    """Attempt to delete all the child files/directories from the specified folder. It is recommended to call this function at the start
     of every core generation script as it ensures that the script is fully stateless. If a script generates N cores when first run
     and is subsequently modified to produce N/2 cores, then the remaining N/2 core directories will remain in the parent directory.
     This should not matter as the SLURM script will only run the correct subset of cores, but it can get confusing. If the parent directory
@@ -682,14 +754,14 @@ def clear_parent_directory(parent_directory, prompt_if_exists=True):
     
     Args:
         parent_directory (str): The directory to clear
-        prompt_if_exists (bool): Whether to confirm with the user before deleting the directory
+        confirm (bool): Whether to confirm with the user before deleting the directory
         
     Returns:
         None"""
     
     parent_directory = Path(parent_directory)
     if os.path.exists(parent_directory):
-        if prompt_if_exists:
+        if confirm:
             x = input(f"{parent_directory} already exists - are you sure you want to erase and continue? Y/N")
             if x.lower() == "n":
                 print("Quitting")
