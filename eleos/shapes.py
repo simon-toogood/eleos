@@ -44,9 +44,7 @@ Class template::
 from dataclasses import dataclass
 from typing import ClassVar
 import shutil
-from pathlib import Path
 
-from . import spx, utils
 
 
 def shapeclass(*args, **kwargs):
@@ -71,7 +69,7 @@ class Shape:
                     setattr(self, name, getattr(self, "retrieved_"+name))
                     delattr(self, "retrieved_"+name)
                 except AttributeError:
-                    print(f"Failed on {name}")
+                    print(f"Clear attribute failed for {name} on {self}")
 
     def generate_apr_data(self):
         """Generate the section of the .apr file that stores the shape parameters
@@ -255,7 +253,13 @@ height values together with their estimated errors."""
         
 
 def get_shape_from_id(id_):
-    """Given a shape ID integer, return a reference to the class corresponding to that ID. Note that this returns a class, not an instantiated object."""
+    """Given a shape ID integer, return a reference to the class corresponding to that ID. Note that this returns a class, not an instantiated object.
+    
+    Args:
+        id_: Shape ID to get
+        
+    Returns:
+        Shape: Class object of the corresponding shape"""
     id_ = int(id_)
     for shape_class in ALL_SHAPES:
         if shape_class.ID == id_:

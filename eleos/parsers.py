@@ -198,9 +198,8 @@ class NemesisItr:
     def add_column_names(self, profiles):
         names = []
         for label, profile in profiles.items():
-            names += [f"{label} {n}" for n in profile.shape.NAMES]
-            if isinstance(profile, profiles_.AerosolProfile):
-                names += [f"{label} radius", f"{label} variance", f"{label} imag_n"]
+            print(label, profile.NAMES)
+            names += [f"{label} {n}" for n in profile.NAMES]
         self.state_vectors.columns = names
 
 

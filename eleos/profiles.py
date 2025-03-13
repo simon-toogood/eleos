@@ -71,9 +71,9 @@ class Profile:
         try:
             if hasattr(self.shape, name):
                 setattr(self.shape, name, value)
+            return super().__setattr__(name, value)
         except AttributeError:
-            pass
-        return super().__setattr__(name, value)
+            return super().__setattr__(name, value)
 
     @classmethod
     def from_previous_retrieval(cls, result, label):
