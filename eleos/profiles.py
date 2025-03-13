@@ -23,7 +23,7 @@ class Profile:
         self.core = None
         self.label = label
 
-    def __str__(self):
+    def print_table(self, colors=True, **kwargs):
         if not self.retrieved:
             headers = ["Prior", "Error"]
         else:
@@ -45,20 +45,29 @@ class Profile:
             if self.retrieved:
                 try:
                     pct_diff = 100*(getattr(self, name_group[2]) - getattr(self, name_group[0])) / getattr(self, name_group[0])
-                    if abs(pct_diff) > 100:
+                    end = "\x1b[0m"
+                    if colors and (abs(pct_diff) > 100):
                         color = "\x1b[41m"
-                    elif 20 < abs(pct_diff) <= 100:
+                    elif colors and ( 20 < abs(pct_diff) <= 100):
                         color = "\x1b[43m"
-                    elif abs(pct_diff) <= 20:
+                    elif colors and (abs(pct_diff) <= 20):
                         color = "\x1b[42m"
-                    data[-1].append(f"{color}{pct_diff:+.1f}%\x1b[0m")
+                    else:
+                        color = ""
+                        end = ""
+                    data[-1].append(f"{color}{pct_diff:+.1f}%{end}")
                 except:
                     data[-1].append(" ")
         
-        return utils.generate_ascii_table(f"{self.label} {self.shape}", headers, [n[0] for n in names], data)
+        table = utils.generate_ascii_table(f"{self.label} {self.shape}", headers, [n[0] for n in names], data)
+        print(table, **kwargs)
+        return table
 
     def __setattr__(self, name, value):
         # Override the setattr method to allow sharing of attributes between the Profile and Shape objects for convenience
+        if name == "NAMES":
+            return super().__setattr__(name, value)
+
         try:
             if hasattr(self.shape, name):
                 setattr(self.shape, name, value)
@@ -67,32 +76,27 @@ class Profile:
         return super().__setattr__(name, value)
 
     @classmethod
-    def from_previous_retrieval(cls, core_directory, label=None):
+    def from_previous_retrieval(cls, result, label):
         """Create a Profile object using the retrieved parameters from a previous retrieval as priors. Use either id or label to specify the profile to use in the previous retrieval.
         
         Args:
-            core_directory: The core directory of the previous retrieval
-            label: The label of the profile to use in the previous retrieval"""
-        
-        res = results.NemesisResult(core_directory)
+            result (NemesisResult): The result object from the previous retrieval
+            label (str): The label of the profile to use in the previous retrieval"""
 
-        prev_profile = None
-        for profile in res.profiles:
-            if profile.label == label and cls == type(profile):
-                prev_profile = profile
+        prev = None
+        for profile_label, profile in result.profiles.items():
+            if profile_label == label and cls == type(profile):
+                prev = profile
                 break
             
-        if prev_profile is None:
+        if prev is None:
             raise ValueError(f"Profile with label {label} not found in previous retrieval")
         
-        new_profile = cls._create_profile_from_previous_retrieval(prev_profile)
+        new_profile = cls._create_profile_from_previous_retrieval(prev)
         new_profile.shape._set_prior_to_retrieved()
+        new_profile.retrieved = False
 
         return new_profile
-
-   
-        # Toggle retrieved flag
-        self.retrieved = True
 
     def _clear_result(self):
         """Clear the retrieved values from the profile
@@ -111,12 +115,13 @@ class Profile:
 
 class TemperatureProfile(Profile):
     def __init__(self, filepath, label=None):
-        """Create a temperature profile from a prior file
+        """Create a temperature profile from a prior file. NOT IMPLEMENTED YET
         
         Args:
             filepath: The filepath of the prior temperature profile
             label (str): A label to associate with this Profile. By default it is "Temperature"
         """
+        raise NotImplementedError("Temperature profiles are not fully implemented yet")
         super().__init__(label)
         if self.label is None:
             self.label = "Temperature"
@@ -190,6 +195,7 @@ class GasProfile(Profile):
             raise ValueError("shape attribute must be specified")
         self.shape = shape
         self.shape.share_parameters(self)
+        self.NAMES = self.shape.NAMES
 
         if not ((gas_id is None) ^ (gas_name is None)):
             raise ValueError("Specifiy exactly one of gas_name or gas_id (not both!)")
@@ -222,10 +228,13 @@ class GasProfile(Profile):
         # Convert to list of grouped names
         grouped = [sorted(x, key=sort_key) for x in list(groups.values())]
 
-        return [g for g in grouped if g[0] not in ("label", "gas_id", "isotope_id", "retrieved", "core", "shape")]
+        return [g for g in grouped if g[0] not in ("label", "gas_id", "isotope_id", "retrieved", "core", "shape", "NAMES")]
 
-    def _create_profile_from_previous_retrieval(prev_profile):
-        return GasProfile(gas_name=prev_profile.gas_name, isotope_id=prev_profile.isotope_id, shape=prev_profile.shape, label=prev_profile.label)
+    def _create_profile_from_previous_retrieval(prev):
+        return GasProfile(gas_name=prev.gas_name, 
+                          isotope_id=prev.isotope_id, 
+                          shape=prev.shape, 
+                          label=prev.label)
 
     def _add_result(self, df):
         """Take in a DataFrame created by reading in the .mre file (results.NemesisResult.read_mre) and assign the correct attributes
@@ -301,7 +310,6 @@ class AerosolProfile(Profile):
         AerosolProfile(shape, radius, radius_error, variance, variance_error, n_lookup)
         
         Args:
-            label (str): A label to assosiate with this profile
             shape (Shape): A Shape object to use for the profile shape
             label (str): A label to associate with this Profile. By default it is "Aerosol <aerosol_id>" (eg. "Aerosol 1")       
             shape (Shape): A Shape object that describes the profile shape
@@ -314,7 +322,8 @@ class AerosolProfile(Profile):
             radius_error (float): If retrieve_optical is set, the error used for the particle radius prior
             variance_error (float): If retrieve_optical is set, the error used for the particle size variance prior
             imag_n_error (float): If retrieve_optical is set, the error used for the imaginary part of the refractive index
-             """
+            label (str): A label to assosiate with this profile
+        """
 
         super().__init__(label=label)
         if label is None:
@@ -344,11 +353,16 @@ class AerosolProfile(Profile):
             self.radius_error = radius_error
             self.variance_error = variance_error
             self.imag_n_error = imag_n_error
+            if radius_error is None or variance_error is None or imag_n_error is None:
+                raise ValueError("Cannot retireve optical properties without specified errors. Did you remember to set radius_error, variance_error, or imag_n_error?")
+        else:
+            if radius_error is not None or variance_error is not None or imag_n_error is not None:
+                raise ValueError("Cannot specify errors for radius/variance.imag_n without retrieving optical peroperties. Did you forget to set retrieve_optical=True?")
 
-        self.NAMES = self.shape.NAMES + ["radius", "variance", "imag_n", "n_lookup"]
+        self.NAMES = self.shape.NAMES + ["radius", "variance", "imag_n"]
 
     def __repr__(self):
-        return f"<AerosolProfile {self.aerosol_id} [{self.create_nemesis_string()}]>"
+        return f"<AerosolProfile {self.label} [{self.create_nemesis_string()}]>"
 
     def _get_displayable_attributes(self):
         def sort_key(name):
@@ -402,6 +416,46 @@ class AerosolProfile(Profile):
 
         self.retrieved = True
         self.shape.share_parameters(self)
+
+    def _create_profile_from_previous_retrieval(prev):
+        if prev.retrieve_optical:
+            if prev.lookup: 
+                return AerosolProfile(shape=           prev.shape,
+                                      radius=          prev.retrieved_radius,
+                                      radius_error=    prev.retrieved_radius_error,
+                                      variance=        prev.retrieved_variance,
+                                      variance_error=  prev.retrieved_variance_error,
+                                      n_lookup=        prev.n_lookup,
+                                      label=           prev.label,
+                                      retrieve_optical=True)
+            else:
+                return AerosolProfile(shape=           prev.shape,
+                                      radius=          prev.retrieved_radius,
+                                      radius_error=    prev.retrieved_radius_error,
+                                      variance=        prev.retrieved_variance,
+                                      variance_error=  prev.retrieved_variance_error,
+                                      real_n=          prev.real_n,
+                                      imag_n=          prev.retrieved_imag_n,
+                                      imag_n_error=    prev.retrieved_imag_n_error,
+                                      label=           prev.label,
+                                      retrieve_optical=True)
+        else:
+            if prev.lookup:
+                return AerosolProfile(shape=           prev.shape,
+                                      radius=          prev.radius,
+                                      variance=        prev.variance,
+                                      n_lookup=        prev.n_lookup,
+                                      label=           prev.label,
+                                      retrieve_optical=False)
+
+            else:
+                return AerosolProfile(shape=           prev.shape,
+                                      radius=          prev.radius,
+                                      variance=        prev.variance,
+                                      real_n=          prev.real_n,
+                                      imag_n=          prev.imag_n,
+                                      label=           prev.label,
+                                      retrieve_optical=False)
 
     def create_nemesis_string(self):
         """Create the NEMESIS code that represents the aerosol profile (eg. -1 0 32)

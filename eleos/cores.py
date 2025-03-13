@@ -1,11 +1,15 @@
-import os
-import shutil
-import pandas as pd
+import math
 import pickle
 import time
-from pathlib import Path
-import numpy as np
 import sys
+import signal
+import os
+import shutil
+import subprocess
+from pathlib import Path
+
+import pandas as pd
+import numpy as np
 
 import warnings
 warnings.formatwarning = lambda msg, *_: f"Warning: {msg}\n"
@@ -15,7 +19,7 @@ from . import spx
 from . import parsers
 from . import utils
 from . import profiles as profiles_ # to avoid namespace shadowing by NemesisCore.profiles
-
+from . import results
 
 CORE_ID_COUNTER = 0
 
@@ -57,10 +61,12 @@ class NemesisCore:
                  planet="jupiter", 
                  scattering=True, 
                  forward=False,
-                 prompt_if_exists=True, 
+                 confirm=True, 
                  num_iterations=30,
                  num_layers=120, 
                  bottom_layer_height=None, 
+                 min_pressure=None,
+                 max_pressure=None,
                  instrument_ktables="NIRSPEC", 
                  fmerror_factor=0,
                  fmerror_pct=None,
@@ -78,10 +84,12 @@ class NemesisCore:
             planet (str):                 Name of the planet being observed. Must be one of 'jupiter', 'saturn', 'uranus', 'neptune' or 'titan'.
             scattering (bool):            Whether to run a scattering retrieval or not
             forward (bool):               Whether of not to run a forward model (ie. set number of iterations = 0)
-            prompt_if_exists (bool):      If the core directory already exists, then ask before continuing
+            confirm (bool):               If the core directory already exists, then ask before continuing
             num_iterations (int):         Number of iterations to run in the retrieval (if forward is set this has no effect)
             num_layers (int):             The number of atmospheric layers to simulate
-            bottom_layer_height (int):    The height in km of the bottom of the atmosphere (by defauylt use the lowest height in the .ref file)
+            bottom_layer_height (int):    The height in km of the bottom of the atmosphere (by default it uses the lowest height in the .ref file)
+            min_pressure (float):         The pressure at the top of the model atmosphere
+            max_pressure (float):         The pressure at the bottom of the model atmosphere
             instrument_ktables (str):     Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use.
             fmerror_factor (float):       The factor by which to multiply the error on the spectrum (see also, fmerror_pct and fmerror_value)
             fmerror_pct (float):          If given, instead of using fmerror_factor or fmerror_value, use a flat percentage of the brightness (eg. 0.1 = 10%) (see also, fmerror_factor and fmerror_value)
@@ -113,21 +121,7 @@ class NemesisCore:
         self.directory = self.parent_directory / f"core_{self.id_}"
 
         # Create the directory tree if it doesn't already exist and clear it if it does
-        os.makedirs(self.parent_directory, exist_ok=True)
-        if os.path.exists(self.directory) and prompt_if_exists:
-            if os.path.exists(self.directory / "nemesis.mre"):
-                msg = "There is already a core that has been run in"
-            elif os.path.exists(self.directory / "nemesis.ref"):
-                msg = "There is already a core that has not been run yet in"
-            else:
-                msg = "There is already data in"
-
-            x = input(f"{msg} {self.directory} - erase and continue? Y/N")
-            if x.lower() == "n":
-                return
-            shutil.rmtree(self.directory)
-        os.makedirs(self.directory)
-        os.mkdir(self.directory / "plots")
+        self._create_directory_tree(confirm)
 
         # Check if we are perfoming a scattering run with more than 39 layers (NEMESIS hates this...)
         if num_layers > 39 and self.scattering:
@@ -140,13 +134,9 @@ class NemesisCore:
             warnings.warn(f"No ref file specified. Using the default in {self.ref_file}")
         else:
             self.ref_file = ref_file
-        
-        # Copy in the boilerplate files
-        self._copy_input_files()
-        self._copy_template_files()
 
         # Parse the ref file:
-        self.ref = parsers.NemesisRef(self.directory / "nemesis.ref")
+        self.ref = parsers.NemesisRef(self.ref_file)
 
         # Set bottom layer height if not defined
         if bottom_layer_height is None:
@@ -154,10 +144,11 @@ class NemesisCore:
         else:
             self.bottom_layer_height = bottom_layer_height
 
-        # Set layer type (by default this is 1 - equal log pressure grid)
-        self.layer_type = 1
-        self.min_pressure = self.ref.data.iloc[-1].pressure
-        self.max_pressure = self.ref.data.iloc[0].pressure
+        # Set min/max pressures
+        if min_pressure is None:
+            self.min_pressure = self.ref.data.pressure.min()
+        if max_pressure is None:
+            self.max_pressure = self.ref.data.pressure.max()
 
         # Set number of aerosol modes (incremented by add_profile)
         self.num_aerosol_modes = 0
@@ -180,6 +171,23 @@ class NemesisCore:
 
     def __str__(self):
         return f"<NemesisCore: {self.directory}>"
+
+    def _create_directory_tree(self, prompt_if_exists):
+        os.makedirs(self.parent_directory, exist_ok=True)
+        if os.path.exists(self.directory) and prompt_if_exists:
+            if os.path.exists(self.directory / "nemesis.mre"):
+                msg = "There is already a core that has been run in"
+            elif os.path.exists(self.directory / "nemesis.ref"):
+                msg = "There is already a core that has not been run yet in"
+            else:
+                msg = "There is already data in"
+
+            x = input(f"{msg} {self.directory} - erase and continue? Y/N")
+            if x.lower() == "n":
+                return
+            shutil.rmtree(self.directory)
+        os.makedirs(self.directory)
+        os.mkdir(self.directory / "plots")
 
     def _save_core(self):
         """Dump the core object to a pickle file in the core directory
@@ -232,7 +240,6 @@ class NemesisCore:
         shutil.copy(constants.PATH / "data/statics/nemesis.abo", self.directory)
         shutil.copy(constants.PATH / "data/statics/nemesis.nam", self.directory)
         shutil.copy(constants.PATH / "data/statics/nemesis.sol", self.directory)
-        shutil.copy(constants.PATH / "data/statics/makephase.inp", self.directory)
 
     def _generate_inp(self):
         """Generate the nemesis input file
@@ -301,7 +308,6 @@ class NemesisCore:
         out = out.replace("<BOUNDARY>", f"{int(self.scattering)}")
         out = out.replace("<N_LAYERS>", f"{int(self.num_layers)}")
         out = out.replace("<BASE>", f"{self.bottom_layer_height:.2f}")
-        out = out.replace("<LAYER_TYPE>", str(self.layer_type))
         with open(self.directory / "nemesis.set", mode="w+") as file:
             file.write(out)
 
@@ -438,32 +444,6 @@ class NemesisCore:
         # Check to see if any aerosols have been added - if not then return immediately
         if self.num_aerosol_modes == 0:
             return
-        
-        # Read in wavelengths bounds from spx file
-        wls = spx.read(self.spx_file).geometries[0].wavelengths
-        start_wl = round(min(wls) - 0.1, 1)
-        end_wl = round(max(wls) + 0.1, 1)
-        print(start_wl, end_wl)
-        if self.reference_wavelength is not None:
-            ref_wl_idx, ref_wl = utils.find_nearest(wls, self.reference_wavelength)
-            self.reference_wavelength = ref_wl
-        else:
-            ref_wl_idx = 0
-            self.reference_wavelength = start_wl
-            warnings.warn(f"No reference wavelength for aerosol cross-sections specified - using the shortest wavelength ({start_wl:1f}um)")
-
-        # Replace the number of aerosol modes and start/end/delta wavelengths
-        with open(self.directory / "makephase.inp", mode="r+") as file:
-            lines = file.read().split("\n")
-            lines[0] = str(self.num_aerosol_modes)
-            lines[2] = f"{start_wl} {end_wl} 0.1"
-            file.seek(0)
-            file.write("\n".join(lines))
-            file.truncate()
-
-        # Generate the normxsc.inp file
-        with open(self.directory / "normxsc.inp", mode="w+") as file:
-            file.write(f"nemesis.xsc\n{ref_wl_idx + 1} 1")
 
         # Run Makephase and Normxsc
         cwd = os.getcwd()
@@ -516,24 +496,64 @@ class NemesisCore:
             file.write(str(len(df)) + "\n")
             file.write(df.to_string(header=False, index=False))
 
-    def _append_to_makephase_inp(self, profile):
-        """Add the optical properties of an AerosolProfile to the Makephase input file
+    def _generate_makephase_inp(self):
+        """Add the optical properties of any attached AerosolProfiles to the Makephase input file
         
         Args:
-            profile (profiles.AerosolProfile): The profile to add
+            None
             
         Returns:
             None
             
-        Modifies:
-            makephase.inp"""
+        Creates:
+            makephase.inp
+            normxsc.inp"""
         
-        with open(self.directory / "makephase.inp", mode="a") as file:
-            file.write(f"1\n{profile.radius} {profile.variance}\n2\n")
-            if not profile.lookup:
-                file.write(f"1\n{profile.real_n} {profile.imag_n}\n")
-            else:
-                file.write(f"{constants.MAKEPHASE_GASES[profile.n_lookup]}\n")
+        # Get wavelength bounds including the specified reference wavelength
+        start, end, step, idx = self._get_xsc_wavelengths(step=0.1)
+        
+        # Generate the makephase.inp file
+        with open(self.directory / "makephase.inp", mode="w+") as file:
+            file.write(str(self.num_aerosol_modes) + "\n")
+            file.write("1\n")
+            utils.write_nums(file, start, end, step)
+            file.write("nemesis\n")
+            file.write("y\n")
+
+            for name, profile in self.profiles.items():
+                if isinstance(profile, profiles_.AerosolProfile):
+                    file.write(f"1\n{profile.radius} {profile.variance}\n2\n")
+                    if not profile.lookup:
+                        file.write(f"1\n{profile.real_n} {profile.imag_n}\n")
+                    else:
+                        file.write(f"{constants.MAKEPHASE_GASES[profile.n_lookup]}\n")
+
+        # Generate the normxsc.inp file
+        with open(self.directory / "normxsc.inp", mode="w+") as file:
+            file.write(f"nemesis.xsc\n{idx + 1} 1")
+
+    def _generate_pressure_lay(self):
+        """Generate the pressure.lay file that splits the .ref file up into layers for the model
+        
+        Args:
+            min_pressure (float): The pressure at the top of the atmosphere
+            max_pressure (float): The pressure at the bottom of the atmosphere
+            
+        Returns:
+            None
+            
+        Creates:
+            pressure.lay"""
+        
+        pressures = np.logspace(np.log10(self.max_pressure), 
+                                np.log10(self.min_pressure), 
+                                self.num_layers)
+        
+        with open(self.directory / "pressure.lay", mode="w+") as file:
+            file.write("Created by Eleos\n")
+            file.write(str(self.num_layers) + "\n")
+            for p in pressures:
+                file.write(str(p) + "\n")
 
     def _generate_summary(self):
         """Dump the information used to create the NEMESIS core to a human-readable text file
@@ -570,7 +590,183 @@ class NemesisCore:
                 if isinstance(profile, profiles_.AerosolProfile):
                     file.write(name + "\n")
             file.truncate(file.tell() - 1)
-                
+
+    def _get_xsc_wavelengths(self, step):
+        """Get the wavelengths for use in Makephase, including the full data range and, if necessary, 
+        expanding to include the reference wavelength specified. 
+        
+        Args:
+            step: Wavelength step size (microns)
+            
+        Returns:
+            float: Start wavelength
+            float: End wavelength
+            float: Wavelength step
+            int: reference wavelength index
+        """
+
+        # Get wavelengths from spx file
+        wls = spx.read(self.spx_file).geometries[0].wavelengths
+
+        # Initial guesses for start and end wavelengths
+        start_wl = math.floor(min(wls) / step) * step
+        end_wl = math.ceil(max(wls) / step) * step
+
+        # Expand the range to include the reference wavelength if necessary
+        if self.reference_wavelength < start_wl:
+            start_wl = math.floor(self.reference_wavelength / step) * step  # Round down to nearest step
+        elif self.reference_wavelength > end_wl:
+            end_wl = math.ceil(self.reference_wavelength / step) * step  # Round up to nearest step
+        
+        # Find the reference wavelength index and set the reference value to the closest value
+        idx, ref = utils.find_nearest(np.arange(start_wl, end_wl+step, step), self.reference_wavelength)
+        self.reference_wavelength = ref
+
+        return start_wl, end_wl, step, idx
+
+    def generate_core(self, verbosity=1):
+        """Create all the files necessary for a NEMESIS retrieval in the directory specified by NemesisCore.directory.
+        
+        Args:
+            verbosity (int): One of 0, 1, 2. If 0 then do not print any progress. If 1 then print core number. If 2 then print status for each file
+            
+        Returns:
+            None
+
+        Creates:
+            See _generate_* methods
+        """
+        if verbosity == 1: print(f"Generating core {self.id_}")
+
+        if verbosity == 2: print(f"Generating summary file")
+        self._generate_summary()
+
+        if verbosity == 2: print(f"Copying .spx and .ref files")
+        self._copy_input_files()
+
+        if verbosity == 2: print(f"Copying boilerplate files")
+        self._copy_template_files()
+
+        if verbosity == 2: print(f"Generating pressure.lay")
+        self._generate_pressure_lay()
+
+        if verbosity == 2: print(f"Generating nemesis.inp")
+        self._generate_inp()
+        
+        if verbosity == 2: print(f"Generating nemesis.set")
+        self._generate_set()
+
+        if verbosity == 2: print(f"Generating nemesis.fla")
+        self._generate_flags()
+
+        if verbosity == 2: print(f"Generating aerosol.ref")
+        self._generate_aerosol_ref()
+
+        if verbosity == 2: print(f"Generating parah2.ref")
+        self._generate_parah2_ref()
+
+        if verbosity == 2: print(f"Generating nemesis.kls")
+        self._generate_kls()
+
+        if verbosity == 2: print(f"Generating fmerror.dat")
+        self._generate_fmerror()
+
+        if verbosity == 2: print(f"Generating fcloud.ref")
+        self._generate_fcloud_ref()
+
+        if verbosity == 2: print(f"Generating makephase.inp and normxsc.inp")
+        self._generate_makephase_inp()
+
+        if verbosity == 2: print(f"Generating nemesis.xsc and [hg]phase.dat files")
+        self._generate_xsc()
+
+        if verbosity == 2: print(f"Generating nemesis.apr")
+        self._generate_apr()
+
+        if verbosity == 2: print("Saving Eleos core object")
+        self._save_core()        
+
+    def run(self):
+        """Run NEMESIS on the core. This method should only be used for short forward models as
+        it does not schedule the jobs on the ALICE compute nodes (see run_alice_job() for that), 
+        instead running it on the login node.
+        
+        Args:
+            None
+            
+        Returns:
+            NemeisResult: The results object for the core"""
+        
+        self.generate_core(print_progress=True)
+        print("Running NEMESIS...")
+        subprocess.run("Nemesis < nemesis.nam > nemesis.prc", 
+                       shell=True, 
+                       cwd=self.directory,
+                       stdout=subprocess.PIPE)
+        res = results.NemesisResult(self.directory)
+        res.make_summary_plot()
+        print("Finished!")
+        return res
+
+    def generate_prior_distributions(self):
+        """Run NEMESIS briefly in a temporary directory to generate the prior gas and aerosol profiles.
+        
+        Args:
+            None
+            
+        Returns:
+            pd.DataFrame: Data from the .prf files generated. Columns are: 'height', 'pressure', 'temperature', the gas profiles, and the aerosol profiles
+        """
+
+        # Change core directory to eleos/tmp temporarily
+        old_dir = self.directory
+        self.directory = constants.PATH / "tmp"
+
+        # Clear tmp directory
+        for fp in self.directory.glob("*"):
+            if fp.is_file():
+                fp.unlink()
+
+        # Copy any extra files from the mian directory
+        for filename in old_dir.glob("*"):
+            if filename.is_file():
+                shutil.copy(filename, self.directory)
+
+        # Generate the core in this directory
+        self.generate_core(verbosity=0)
+
+        # Run NEMESIS
+        with open(self.directory / "nemesis.nam") as inp:
+            proc = subprocess.Popen("Nemesis < nemesis.nam > nemesis.prc", 
+                                    shell=True, 
+                                    cwd=self.directory,
+                                    preexec_fn=os.setsid)
+            # Wait for the aerosol.prf file to be generated - potential race condition??
+            while True:
+                time.sleep(0.05)
+                if (self.directory / "aerosol.prf").exists() and (self.directory / "nemesis.prf").exists():
+                    break
+        
+        # Kill NEMESIS
+        os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
+
+        # Read in the .prf files
+        aerosol_prf = parsers.AerosolPrf(self.directory / "aerosol.prf")
+        nemesis_prf = parsers.NemesisPrf(self.directory / "nemesis.prf")
+
+        # Reset the directory and clear tmp
+        for fp in self.directory.glob("*"):
+            if fp.is_file():
+                fp.unlink()
+        self.directory = old_dir
+
+        nemesis_prf.data.height = np.round(nemesis_prf.data.height * 1000).astype(int) 
+        aerosol_prf.data.height = np.round(aerosol_prf.data.height * 1000).astype(int) 
+        merged = pd.merge(nemesis_prf.data, aerosol_prf.data, on="height")
+        merged.height /= 1000
+
+        return merged
+
     def get_aerosol_profile(self, id=None):
         """Given an aerosol ID (as used by NEMESIS) return the corresponding AerosolProfile object.
         
@@ -610,44 +806,6 @@ class NemesisCore:
             # Assign aerosol IDs
             profile.aerosol_id = self.num_aerosol_modes
 
-            # Add profile data to makephase input file
-            self._append_to_makephase_inp(profile=profile)
-
-    def generate_core(self):
-        """Create all the files necessary for a NEMESIS retrieval in the directory specified by NemesisCore.directory.
-        
-        Args:
-            None
-            
-        Returns:
-            None
-
-        Creates:
-            See _generate_* methods
-        """
-        print(f"Generating core {self.id_}")
-
-        # Consistency check for aerosol mode ID - sometimes this screws up and I'm not sure why
-        ids = []
-        for p in self.profiles.values():
-            if isinstance(p, profiles_.AerosolProfile):
-                ids.append(p.aerosol_id)
-        if len(set(ids)) != len(ids):
-            raise ValueError("Aerosol IDs are not consistent!")
-
-        self._generate_summary()
-        self._generate_inp()
-        self._generate_set()
-        self._generate_flags()
-        self._generate_aerosol_ref()
-        self._generate_parah2_ref()
-        self._generate_kls()
-        self._generate_fmerror()
-        self._generate_fcloud_ref()
-        self._generate_xsc()
-        self._generate_apr()
-        self._save_core()        
-
     def fix_peak(self, central_wavelength, width, error=1e-15):
         """Set a region of the spectra to be fixed (ie. NEMESIS will be forced to match it). This is done internally by setting the
         error on that region to be extrmemely small.
@@ -675,30 +833,40 @@ class NemesisCore:
         heights = self.ref.data.height
         return min(heights), max(heights)
 
-    def set_pressure_limits(self, min_pressure=None, max_pressure=None):
-        """Set the upper and lower pressure limits for the retrieval to consider
+    def set_random_priors(self):
+        """For each parameter in the associated profiles, set the values randomly based on a normal distribution with mean and standard deviation given by the pre-existing values. 
+        
+        For example, if there is a single attached GasProfile with the following parameters:
+        GasProfile(gas_name="PH3", 
+                   shape=shapes.Shape20(
+                   knee_pressure=1.0, 
+                   tropopause_pressure=0.1,
+                   deep_vmr=1.86e-6,          deep_vmr_error=0.2e-6,
+                   fsh=0.3,                   fsh_error=0.1))
+        then calling this function will set deep_vmr to a value randomly sampled from a normal distribution with mean 1.86e-6 and standard deviation 0.2e-6, and 
+        fsh to a value randomly sampled from a normal distribution with mean 0.3 and standard deviation 0.1. The core can then be modified / generated as normal.
         
         Args:
-            min_pressure (float): The pressure at the top of the atmosphere
-            max_pressure (float): The pressure at the bottom of the atmosphere
-            
+            None
+
         Returns:
             None
-            
-        Creates:
-            pressure.lay"""
-        
-        self.layer_type = 4
-        self.min_pressure = min_pressure
-        self.max_pressure = max_pressure
-        pressures = np.logspace(np.log10(max_pressure), 
-                                np.log10(min_pressure), 
-                                self.num_layers)
-        with open(self.directory / "pressure.lay", mode="w+") as file:
-            file.write("Created by Eleos\n")
-            file.write(str(self.num_layers) + "\n")
-            for p in pressures:
-                file.write(str(p) + "\n")
+        """
+        print("Generating random priors...")
+        for label, profile in self.profiles.items():
+            for name in profile.NAMES:
+                try:
+                    mean = getattr(profile, name)
+                    sigma = getattr(profile, name + "_error")
+                    n = -1
+                    while n < 0:
+                        n = np.random.normal(mean, sigma)
+                    if sigma == 0:
+                        setattr(profile, name+"_error", 1e-8)
+                    setattr(profile, name, n)
+                except AttributeError:
+                    continue
+        print("Generated priors!")
 
 
 class FixedPeak:
@@ -723,7 +891,10 @@ def load_core(core_directory):
         
     Returns:
         NemesisCore: The unpickled core"""
-    with open(Path(core_directory) / "core.pkl", 'rb') as f:
+    
+    core_directory = Path(core_directory)
+
+    with open(core_directory / "core.pkl", 'rb') as f:
         core = pickle.load(f)
 
     # Refresh the directory attributes in the NemesisCore object in case the folder has been moved
@@ -733,7 +904,36 @@ def load_core(core_directory):
     return core
 
 
-def reset_core_numbering():
+def load_from_previous(previous_directory, parent_directory, confirm=True):
+    """Load a core from a previous retrieval to use as a template for creating a new core. This method loads the core
+    using the core.pkl file and then calls from_previous_retrieval on all Profile objects stored, as well as resetting core ID,
+    parent_directory, etc...
+    
+    Args:
+        previous_directory (str): The path to the core directory to load
+        parent_directory: THe new parent directory to create the new core under
+        
+    Returns:
+        NemesisCore: The new core object"""
+    
+    core = load_core(previous_directory)
+    res = results.NemesisResult(previous_directory)
+
+    global CORE_ID_COUNTER
+    CORE_ID_COUNTER += 1
+    core.id_ = CORE_ID_COUNTER
+
+    core.parent_directory = Path(parent_directory)
+    core.directory = core.parent_directory / f"core_{core.id_}"
+    core._create_directory_tree(confirm)
+
+    for label, profile in core.profiles.items():
+        core.profiles[label] = profile.from_previous_retrieval(res, label)
+
+    return core
+
+
+def reset_core_numbering(): 
     """Reset the automatic core numbering. Useful for creating multiple sets of cores in one program.
     
     Args:
@@ -772,16 +972,22 @@ def clear_parent_directory(parent_directory, confirm=True):
             shutil.rmtree(parent_directory)
 
 
-def generate_alice_job(parent_directory, python_env_name, username=None, memory=16, hours=24):
+def generate_alice_job(parent_directory, 
+                       python_env_name, 
+                       memory=16, 
+                       hours=24,
+                       username=None,
+                       notify=("end", "fail")):
     """Generate an sbatch submission script for use on ALICE. The job is an array job over all the specified cores.
     After running NEMESIS it will run Eleos to create some summary plots in the parent/core_N/plots directory
     
     Args:
         parent_directory (str): The directory containing the NEMESIS core directories to be run
         python_env_name (str): The name of a conda environment which has Eleos installed
-        username: The username of the user running the job (eg, scat2, lnf2)
-        memory: The amount of memory to use (in GB)
-        hours: The number of hours to schedule the job for
+        memory (int): The amount of memory to use (in GB)
+        hours (int): The number of hours to schedule the job for
+        username (str): The username of the user running the job (eg, scat2, lnf2)
+        notify (List[str] or str): What email notifications to send. Can be any combination of 'begin', 'end', 'fail'
         
     Returns:
         None
@@ -791,8 +997,18 @@ def generate_alice_job(parent_directory, python_env_name, username=None, memory=
 
     parent_directory = Path(parent_directory)
     script_path = parent_directory / "submitjob.sh"
-
     ncores = len([f for f in os.listdir(parent_directory) if not os.path.isfile(parent_directory / f)])
+
+    # Coerce notify to an iterable and create the string
+    try:
+        len(notify)
+    except:
+        notify = [notify]
+    notify_str = ",".join(notify).upper()   
+
+    # Assert that hours and memoryt are ints
+    assert isinstance(hours, int)
+    assert isinstance(memory, int) 
 
     # Read the submission script and replace template fields
     with open(constants.PATH / "data/statics/template.job", mode="r") as file:
@@ -803,6 +1019,7 @@ def generate_alice_job(parent_directory, python_env_name, username=None, memory=
         out = out.replace("<CORE_DIR>", str(parent_directory.resolve()))
         out = out.replace("<USERNAME>", str(username))
         out = out.replace("<PYTHON_ENV>", python_env_name)
+        out = out.replace("<NOTIFY>", notify_str)
 
     # Write the filled template 
     with open(script_path, mode="w+") as file:
@@ -819,6 +1036,7 @@ def run_alice_job(parent_directory, print_queue_delay=2):
     Returns:
         None
     """
-    os.system(f"sbatch {parent_directory}submitjob.sh")
+    parent_directory = Path(parent_directory)
+    os.system(f"sbatch {parent_directory / 'submitjob.sh'}")
     time.sleep(print_queue_delay)
     os.system("squeue --me")

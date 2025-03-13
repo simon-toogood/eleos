@@ -9,6 +9,16 @@ import re
 # NumPy extension functions
 
 def find_nearest(array, value):
+    """Get the closest item to a given value in a Numpy array
+    
+    Args:
+        array (np.ndarray): The array to search in
+        value (float): The value to find
+        
+    Returns:
+        int: The index of the closest item in the array
+        float: The closest item in the array"""
+    
     array = np.asarray(array)
     idx = (np.abs(array - value)).argmin()
     return idx, array[idx]
@@ -59,7 +69,7 @@ def indent(string, level=1, spaces_per_level=4):
 
 def write_nums(file, *nums, sep="    ", dp=6):
     for i, n in enumerate(nums):
-        file.write(f"{n:.{dp}f}")
+        file.write(f"{n:.{dp}e}")
         if i != len(nums)-1:
             file.write(sep)
         else:

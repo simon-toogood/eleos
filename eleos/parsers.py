@@ -15,11 +15,17 @@ from . import profiles as profiles_
 
 
 class NemesisRef:
-    """Parser for nemesis.ref
+    """Parser for nemesis.ref and nemesis.prf
     
     Attributes:
-        amform:
-        planet_id: """
+        amform:    Number of latitudes (always 1)
+        planet_id: ID of the planet being analysed.
+        latitude:  Latitude at which the .ref file applies
+        num_layers:Number of layers used 
+        num_gases: Number of gases in the file
+        gas_names: List of the names of all the gases
+        data:      Contains the pressure, temperature, and VMR profiles of each gas at each height
+    """
     def __init__(self, filepath):
         self.filepath = Path(filepath)
         self._extra_header = True
@@ -147,23 +153,6 @@ class NemesisXsc:
         self.xsc = pd.DataFrame(xscs)
         self.xsc.insert(0, column="wavelength", value=waves)
             
-        
-class AerosolPrf:
-    """Parser for the aerosol.prf file
-    
-    Attributes:
-        data: pd.DataFrame containing the aerosol density as a function of height. The units of aerosol density are particles per gram of atmosphere"""
-    
-    def __init__(self, filepath):
-        self.filepath = Path(filepath)
-        self.read()
-
-    def read(self):
-        self.data = pd.read_table(self.filepath, sep="\s+", skiprows=2, header=None)
-        num = len(self.data.columns) - 1
-        header = ["height"] + [f"aerosol_{x}" for x in range(1, num+1)]
-        self.data.columns = header
-
 
 class NemesisItr:
     """Parser for nemesis.itr. Also requires a NemesisMre parser
@@ -215,10 +204,24 @@ class NemesisItr:
         self.state_vectors.columns = names
 
 
+class NemesisPrc:
+    def __init__(self, filepath):
+        self.filepath = Path(filepath)
+        self.read()
+    
+    def read(self):
+        self.chisq = []
+        with open(self.filepath) as file:
+            for line in file:
+                if "chi" in line and "should" not in line:
+                    self.chisq.append(utils.get_floats_from_string(line)[0])
+
+
 class MakephaseOut:
     def __init__(self, filepath):
         self.filepath = Path(filepath)
         self.read()
+        self.add_aerosol_names()
 
     def read(self):
         xsc = NemesisXsc(Path(self.filepath).parent / "nemesis.xsc")
@@ -239,6 +242,11 @@ class MakephaseOut:
                 else:
                     isprev = False
         
+        out = pd.DataFrame(np.hstack(out))
+        out.insert(0, "wavelength", wavelengths)
+        self.data = out
+
+    def add_aerosol_names(self):
         # Get the names of the aerosol layers
         names = []
         with open(Path(self.filepath).parent / "aerosol_names.txt") as file:
@@ -247,8 +255,26 @@ class MakephaseOut:
                 names.append(m + " real")
                 names.append(m + " imag")
         
-        out = pd.DataFrame(np.hstack(out), columns=names)
-        out.insert(0, "wavelength", wavelengths)
-        self.data = out
+   
+class AerosolPrf:
+    """Parser for the aerosol.prf file
+    
+    Attributes:
+        data: pd.DataFrame containing the aerosol density as a function of height. The units of aerosol density are particles per gram of atmosphere"""
+    
+    def __init__(self, filepath):
+        self.filepath = Path(filepath)
+        self.read()
+        self.add_aerosol_names()
 
-        
+    def read(self):
+        self.data = pd.read_table(self.filepath, sep="\s+", skiprows=2, header=None)
+        num = len(self.data.columns) - 1
+        header = ["height"] + [f"aerosol_{x}" for x in range(1, num+1)]
+        self.data.columns = header
+
+    def add_aerosol_names(self):
+        with open(Path(self.filepath).parent / "aerosol_names.txt") as file:
+            names = file.read().split("\n")
+            self.data.columns = ["height"] + names
+

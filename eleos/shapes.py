@@ -67,8 +67,11 @@ class Shape:
         """Set the prior values to the retrieved values and delete the retrived_* attributes."""
         for base in self.NAMES:
             for name in [base, f"{base}_error"]:
-                setattr(self, name, getattr(self, "retrieved_"+name))
-                delattr(self, "retrieved_"+name)
+                try:
+                    setattr(self, name, getattr(self, "retrieved_"+name))
+                    delattr(self, "retrieved_"+name)
+                except AttributeError:
+                    print(f"Failed on {name}")
 
     def generate_apr_data(self):
         """Generate the section of the .apr file that stores the shape parameters

@@ -59,7 +59,7 @@ class NemesisResult:
         retrieved_spectrum (pandas.DataFrame):  A DataFrame containing the measured and modelled spectrum
         retrieved_aerosols (pandas.DataFrame):  A DataFrame containing the retrieved aerosol profiles
         retrieved_gases (pandas.DataFrame):     A DataFrame containing the retrieved chemical profiles
-"""
+    """
     def __init__(self, core_directory):    
         # Load core directory
         self.core_directory = Path(core_directory)
@@ -135,13 +135,13 @@ class NemesisResult:
         else:
             return values[-1]
 
-    def print_summary(self):
+    def print_summary(self, colors=False):
         print(f"Summary of retrieval in {self.core_directory}")
         print(f"Time taken: {utils.format_decimal_hours(self.elapsed_time)}")
         print(f"Chi squared value: {self.chi_sq}")
         
         for name, profile in self.profiles.items():
-           print(profile)
+           profile.print_table(colors=colors)
 
     @property
     def elapsed_time(self):
@@ -249,72 +249,108 @@ class NemesisResult:
             matplotlib.Axes: The Axes object onto which the data was plotted"""
         
         # Iterate over every retrieved aerosol
-        for name in self.retrieved_aerosols.columns:
-            if name in ("height", "pressure"):
+        max_value = -1
+        for label in self.retrieved_aerosols.columns:
+            if label in ("height", "pressure"):
                 continue
+
+            x = self.retrieved_aerosols[label]
+            y = self.retrieved_aerosols.pressure if pressure else self.retrieved_aerosols.height
 
             if unit == "tau/bar":
                 # only god himself knows whats going on with these units...
-                self.retrieved_aerosols[name] *= 1e5 / 10 / constants.GRAVITY[self.core.planet]
-                unit_label = f"Optical thickness / bar at {self.core.reference_wavelength:.2f}µm"
+                x *= 1e5 / 10 / constants.GRAVITY[self.core.planet]
+                unit_label = f"Optical thickness / bar at {self.core.reference_wavelength:.1f}µm"
             elif unit == "particles/g":
-                unit_label = f"Aerosol specific density (particles / gram) at {self.core.reference_wavelength:.2f}µm)"
+                unit_label = f"Aerosol specific density (particles / gram) at {self.core.reference_wavelength:.1f}µm)"
             else:
                 raise ValueError("Invalid unit! - Must be one of 'tau/bar', 'particles/g'")
+            
+            if x.max() > max_value:
+                max_value = x.max()
 
-            # Get a label to use as the legend label - either the custom label or aerosol_<ID>
-            id = int(name.removeprefix("aerosol_"))
-            profile = self.core.get_aerosol_profile(id=id)
-            if profile.label is not None:
-                leg_label = profile.label
-            else:
-                leg_label = name
-
-            y = self.retrieved_aerosols.pressure if pressure else self.retrieved_aerosols.height
-            ax.plot(self.retrieved_aerosols[name], y, label=leg_label)
+            ax.plot(x, y, label=label)
 
         ax.set_xlabel(unit_label)
+        ax.set_xscale("log")
+        ax.set_xlim(1e-6, max_value*2)
         ax.legend()
 
     @plotting_altitude
-    def plot_gas_profiles(self, ax, pressure, gas_names=None, include_priors=True):
+    def plot_gas_profiles(self, ax, 
+                          pressure, 
+                          unit="", 
+                          gas_names=None,
+                          plot_retrieved_profiles=True,
+                          plot_prior_profiles=False, 
+                          plot_ref_profiles=True):
+        
         """Plot gas profiles from the .prf file.
 
         Args:
             ax (matplotlib.Axes): The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes.
             pressure (bool): Whether to plot the gas profiles against pressure (if True) or height (if False).
+            unit (str): One of '', 'ppm', 'ppb' or 'ppt'. 
             gas_names (list[str], optional): List of gas names to plot. If None, plot all gases.
-            include_priors (bool): Whether to plot the prior as well as the retrieved gas profiles
-        
+            plot_retrieved_profiles (bool): Whether to plot the retrieved gas profiles
+            plot_prior_profiles (bool): Whether to plot the prior gas profiles
+            plot_ref_profiles (bool): Whether to plot the profile in the .ref file
+
         Returns:
             matplotlib.Figure: The Figure object to which the Axes belong
             matplotlib.Axes: The Axes object onto which the data was plotted"""
         
-        # Get the appropriate y axes
-        y = self.retrieved_gases["pressure"] if pressure else self.retrieved_gases["height"]
-        y2 = self.core.ref.data["pressure"] if pressure else self.core.ref.data["height"]
-        
         # If no gas names specififed then get every gas profile
         if gas_names is None:
-            gas_names = [x for x in self.retrieved_gases.columns if x not in ("height", "pressure", "temp")]
+            gas_names = [x for x in self.retrieved_gases.columns if x not in ("height", "pressure", "temperature")]
         # Allow passing in of a single string instead of a list
         elif isinstance(gas_names, str):
             gas_names = [gas_names]
+
+        # Get the appropriate y axes
+        y = self.retrieved_gases["pressure"] if pressure else self.retrieved_gases["height"]
+        y2 = self.core.ref.data["pressure"] if pressure else self.core.ref.data["height"]
+
+        # Get the prior distributions if requested
+        if plot_prior_profiles:
+            priors = self.core.generate_prior_distributions()
+            y3 = priors["pressure"] if pressure else priors["height"]
+
+        # Determine the scaling factor
+        if unit == "":
+            scale = 1
+        elif unit == "ppm":
+            scale = 1e6
+        elif unit == "ppb":
+            scale = 1e9
+        elif unit == "ppt":
+            scale = 1e12
+        else:
+            raise ValueError("Invalid unit! - Must be one of '', 'ppm', 'ppb', 'ppt'")
         
         # Plot the profiles
-        colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+        colors = itertools.cycle(plt.rcParams['axes.prop_cycle'].by_key()['color'])
         for i, gas_name in enumerate(gas_names):
-            ax.plot(self.retrieved_gases[gas_name], y, label=gas_name, c=colors[i])
-            if include_priors:
-                ax.plot(self.core.ref.data[gas_name], y2, label=f"{gas_name} Prior", c=colors[i], ls="dashed")
-        
+            c = next(colors)
+            if plot_retrieved_profiles:
+                ax.plot(self.retrieved_gases[gas_name]*scale, y, label=gas_name, c=c)
+            if plot_ref_profiles:
+                ax.plot(self.core.ref.data[gas_name]*scale, y2, label=f"{gas_name} Reference", c=c, ls="dashed")
+            if plot_prior_profiles:
+                ax.plot(priors[gas_name]*scale, y3, label=f"{gas_name} Prior", c=c, ls="dotted")
+
         # Set a limit on lowest VMR
         x1, x2 = ax.get_xlim()
-        if x1 < 1e-20:
-            ax.set_xlim(1e-20, 1)
+        if x1*scale < 1e-12:
+            ax.set_xlim(1e-12*scale, 1*scale)
 
+        # Set unit label
+        if unit == "":
+            label = unit
+        else:
+            label = f"({unit})"
         ax.set_xscale("log")
-        ax.set_xlabel("Volume Mixing Ratio")
+        ax.set_xlabel(f"Volume Mixing Ratio {label}")
         ax.legend()
 
     def make_summary_plot(self, figsize=(11, 10)):
@@ -340,6 +376,9 @@ class NemesisResult:
         self.plot_chisq(ax=axs["C"])
         self.plot_aerosol_profiles(ax=axs["D"])
         self.plot_gas_profiles(ax=axs["E"], gas_names=names)
+
+        if self.core.forward:
+            fig.suptitle("Forward")
 
         fig.savefig(self.core_directory / "plots/summary.png", bbox_inches="tight", dpi=400)
 
@@ -429,5 +468,38 @@ def load_multiple_cores(parent_directory, raise_errors=True):
             if raise_errors:
                 raise e
     return out
+
+
+def load_best_cores(parent_directory, n):
+    """Load n cores from the parent_directory with the lowest chi-squared values.
+
+    Args:
+        parent_directory (str): The directory containing all the individual core directories
+        n (int): The number of cores to load
+    
+    Returns:
+        list[NemesisResult]: A list containing the result object for each core, sorted by chi-squared value (so lowest chi-sqared is index 0 in the list)"""
+    parent_directory = Path(parent_directory)
+
+    dirs = [""]
+    chisqs = [float("inf")]
+    for core_directory in parent_directory.glob("core_*"):
+        prc = parsers.NemesisPrc(core_directory / "nemesis.prc")
+        try:
+            chisq = prc.chisq[-1]
+        except IndexError:
+            continue
+        if len(chisqs) < n:
+            dirs.append(core_directory)
+            chisqs.append(chisq)
+        elif chisq < max(chisqs):
+            i = np.argmax(chisqs)
+            dirs[i] = core_directory
+            chisqs[i] = chisq
+
+
+    chis, dirs = zip(*sorted(zip(chisqs, dirs)))
+
+    return [NemesisResult(d) for d in dirs]
 
 
