@@ -17,7 +17,7 @@ And on Windows:
 `py -m pip install nemesis_eleos`
 
 
-While `eleos` only creates file for and reads files created by NEMESIS, it is mandatory to have NEMESIS installed for this package to work. This is primarily due to required the utilities `Makephase` and `Normxsc` on the PATH. See the NEMESIS GitHub page for full instructions on [how to download the software](https://github.com/nemesiscode/radtrancode/blob/master/README.md) and [how to compile it](https://github.com/nemesiscode/radtrancode/blob/master/AACOMPILE.txt).
+While `eleos` only creates files for, and reads files created by, NEMESIS, it is mandatory to have NEMESIS installed for this package to work. This is primarily due to requiring the utilities `Makephase` and `Normxsc` on the PATH. See the NEMESIS GitHub page for full instructions on [how to download the software](https://github.com/nemesiscode/radtrancode/blob/master/README.md) and [how to compile it](https://github.com/nemesiscode/radtrancode/blob/master/AACOMPILE.txt).
 
 
 This library was built with the intention of running on the University of Leicester’s HPC system ALICE3. Therefore, functions like `cores.generate_alice_job` and `cores.run_alice_job` are only guaranteed to work on ALICE3, which uses the SLURM job scheduler. Other HPC facilities will require their own template submission files in `data/statics` and functions in `cores`.
