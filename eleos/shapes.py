@@ -85,9 +85,6 @@ class Shape:
         """Some Shapes require additional files to be created/copied into the core directory"""
         pass
 
-    def share_parameters(self, obj):
-        obj.__dict__ |= self.__dict__
-
 @shapeclass
 class Shape0(Shape):
     """Profile is to be treated as continuous over the pressure range of runname.ref, the

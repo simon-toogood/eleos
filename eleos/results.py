@@ -60,7 +60,12 @@ class NemesisResult:
         retrieved_aerosols (pandas.DataFrame):  A DataFrame containing the retrieved aerosol profiles
         retrieved_gases (pandas.DataFrame):     A DataFrame containing the retrieved chemical profiles
     """
-    def __init__(self, core_directory):    
+    def __init__(self, core_directory): 
+        """Constructor for NemesisResult
+        
+        Args:
+            core_directory (str): The directory of the core
+        """   
         # Load core directory
         self.core_directory = Path(core_directory)
         self.core = cores.load_core(self.core_directory)

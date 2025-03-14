@@ -147,8 +147,12 @@ class NemesisCore:
         # Set min/max pressures
         if min_pressure is None:
             self.min_pressure = self.ref.data.pressure.min()
+        else:
+            self.min_pressure = min_pressure
         if max_pressure is None:
             self.max_pressure = self.ref.data.pressure.max()
+        else:
+            self.max_pressure = max_pressure
 
         # Set number of aerosol modes (incremented by add_profile)
         self.num_aerosol_modes = 0
@@ -624,6 +628,20 @@ class NemesisCore:
 
         return start_wl, end_wl, step, idx
 
+    def _reset_aerosol_numbering(self):
+        """Reset the aerosol numbering. Useful if loading multiple AerosolProfiles from different cores
+        
+        Args:
+            None
+            
+        Returns:
+            None"""
+        self.num_aerosol_modes = 0
+        for label, profile in self.profiles.items():
+            if isinstance(profile, profiles_.AerosolProfile):
+                self.num_aerosol_modes += 1
+                profile.aerosol_id = self.num_aerosol_modes
+
     def generate_core(self, verbosity=1):
         """Create all the files necessary for a NEMESIS retrieval in the directory specified by NemesisCore.directory.
         
@@ -927,8 +945,9 @@ def load_from_previous(previous_directory, parent_directory, confirm=True):
     core.directory = core.parent_directory / f"core_{core.id_}"
     core._create_directory_tree(confirm)
 
+    core.num_aerosol_modes = 0
     for label, profile in core.profiles.items():
-        core.profiles[label] = profile.from_previous_retrieval(res, label)
+        core.add_profile(profile.from_previous_retrieval(res, label))
 
     return core
 

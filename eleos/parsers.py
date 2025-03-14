@@ -198,7 +198,6 @@ class NemesisItr:
     def add_column_names(self, profiles):
         names = []
         for label, profile in profiles.items():
-            print(label, profile.NAMES)
             names += [f"{label} {n}" for n in profile.NAMES]
         self.state_vectors.columns = names
 
