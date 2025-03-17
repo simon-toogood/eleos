@@ -161,7 +161,10 @@ class NemesisResult:
 
     @plotting
     def plot_chisq(self, ax):
-        ax.plot( self.get_chi_sq(all_iterations=True))
+        if self.core.forward:
+            ax.scatter(0, self.chi_sq)
+        else:
+            ax.plot(self.get_chi_sq(all_iterations=True))
         ax.axhline(y=1, ls="dashed")
         ax.set_xlabel("Iteration Number")
         ax.set_ylabel("$\chi^2$")
@@ -366,7 +369,13 @@ class NemesisResult:
             
         Returns:
             matplotlib.Figure: The produced figure
-            dict(str: matplotlib.Axes): The axes of the produced figure"""
+            dict(str: matplotlib.Axes): The axes of the produced figure with labels:
+                'A' for the spectrum
+                'B' for the residuals
+                'C' for the chi-sqaured plot
+                'D' for the aerosol profiles
+                'E' for the gas profiles"""
+        
         names = []
         for label, profile in self.profiles.items():
             if isinstance(profile, profiles.GasProfile):
@@ -383,7 +392,9 @@ class NemesisResult:
         self.plot_gas_profiles(ax=axs["E"], gas_names=names)
 
         if self.core.forward:
-            fig.suptitle("Forward")
+            fig.suptitle(f"Forward model in {self.core_directory.resolve()}", y=0.92)
+        else:
+            fig.suptitle(f"Retrieval in {self.core_directory.resolve()}")
 
         fig.savefig(self.core_directory / "plots/summary.png", bbox_inches="tight", dpi=400)
 
@@ -414,7 +425,7 @@ class NemesisResult:
                 continue
             ax.plot(data[param])
             ax.set_ylabel(param)
-        
+
         fig.supxlabel('Iteration Number')
         fig.tight_layout()
         fig.savefig(self.core_directory / "plots/iterations.png", bbox_inches="tight", dpi=400)
@@ -466,7 +477,7 @@ def load_multiple_cores(parent_directory, raise_errors=True):
     parent_directory = Path(parent_directory)
 
     out = []
-    for core in sorted(parent_directory.glob("core_*")):
+    for core in sorted(parent_directory.glob("core_*"), key=sort_key_paths):
         try:
             out.append(NemesisResult(core))
         except Exception as e:
@@ -508,3 +519,6 @@ def load_best_cores(parent_directory, n):
     return [NemesisResult(d) for d in dirs]
 
 
+def sort_key_paths(path):
+    x = str(path).split("_")[-1]
+    return int(x)

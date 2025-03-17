@@ -61,7 +61,6 @@ class NemesisCore:
                  planet="jupiter", 
                  scattering=True, 
                  forward=False,
-                 confirm=True, 
                  num_iterations=30,
                  num_layers=120, 
                  bottom_layer_height=None, 
@@ -84,7 +83,6 @@ class NemesisCore:
             planet (str):                 Name of the planet being observed. Must be one of 'jupiter', 'saturn', 'uranus', 'neptune' or 'titan'.
             scattering (bool):            Whether to run a scattering retrieval or not
             forward (bool):               Whether of not to run a forward model (ie. set number of iterations = 0)
-            confirm (bool):               If the core directory already exists, then ask before continuing
             num_iterations (int):         Number of iterations to run in the retrieval (if forward is set this has no effect)
             num_layers (int):             The number of atmospheric layers to simulate
             bottom_layer_height (int):    The height in km of the bottom of the atmosphere (by default it uses the lowest height in the .ref file)
@@ -119,9 +117,6 @@ class NemesisCore:
         # Set the directories of the parent folder and own core
         self.parent_directory = Path(parent_directory).resolve()
         self.directory = self.parent_directory / f"core_{self.id_}"
-
-        # Create the directory tree if it doesn't already exist and clear it if it does
-        self._create_directory_tree(confirm)
 
         # Check if we are perfoming a scattering run with more than 39 layers (NEMESIS hates this...)
         if num_layers > 39 and self.scattering:
@@ -175,6 +170,14 @@ class NemesisCore:
 
     def __str__(self):
         return f"<NemesisCore: {self.directory}>"
+
+    @classmethod
+    def from_old_core(cls, core_directory):
+        """Create a NemesisCore object from a core directory that was not created by Eleos. This is still WIP"""
+        core_directory = Path(core_directory)
+        raise NotImplementedError()
+        return cls(parent_directory=core_directory.parent,
+                   directory=None)
 
     def _create_directory_tree(self, prompt_if_exists):
         os.makedirs(self.parent_directory, exist_ok=True)
@@ -642,7 +645,7 @@ class NemesisCore:
                 self.num_aerosol_modes += 1
                 profile.aerosol_id = self.num_aerosol_modes
 
-    def generate_core(self, verbosity=1):
+    def generate_core(self, verbosity=1, confirm=True):
         """Create all the files necessary for a NEMESIS retrieval in the directory specified by NemesisCore.directory.
         
         Args:
@@ -655,6 +658,9 @@ class NemesisCore:
             See _generate_* methods
         """
         if verbosity == 1: print(f"Generating core {self.id_}")
+
+        if verbosity == 2: print("Creating directory structure")
+        self._create_directory_tree(confirm)
 
         if verbosity == 2: print(f"Generating summary file")
         self._generate_summary()
