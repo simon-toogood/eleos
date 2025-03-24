@@ -25,6 +25,7 @@ class Profile:
 
     def __setattr__(self, name, value):
         try:
+            print(name, value, get_parameter_names(self.shape.NAMES, retrieved=True))
             if name in get_parameter_names(self.shape.NAMES, retrieved=True):
                 self.shape.__setattr__(name, value)
         except:

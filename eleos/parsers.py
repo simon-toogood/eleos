@@ -14,7 +14,13 @@ from . import profiles as profiles_
 ## TODO: Move all parsing routines here, .itr, .prc etc...
 
 
-class NemesisRef:
+class Parser:
+    def __init__(self, filepath):
+        self.filepath = Path(filepath)
+        self.read()
+
+
+class NemesisRef(Parser):
     """Parser for nemesis.ref and nemesis.prf
     
     Attributes:
@@ -27,9 +33,8 @@ class NemesisRef:
         data:      Contains the pressure, temperature, and VMR profiles of each gas at each height
     """
     def __init__(self, filepath):
-        self.filepath = Path(filepath)
         self._extra_header = True
-        self.read()
+        super().__init__(filepath)
 
     def read(self):
         with open(self.filepath) as file:
@@ -64,7 +69,7 @@ class NemesisPrf(NemesisRef):
         self.read()
 
 
-class NemesisMre:
+class NemesisMre(Parser):
     """Parser for the nemesis.mre file
     
     Attributes:
@@ -74,10 +79,7 @@ class NemesisMre:
         longitude (float): Longitude of the observation
         retrieved_spectrum pd.DataFrame: DataFrame containing the measured spectrum + all error sources and the fitted model spectra and its errors
         retrieved_parameters List[pd.DataFrame]: List of DataFrames containing the retrieved parameters from each Profile"""
-    def __init__(self, filepath):
-        self.filepath = Path(filepath)
-        self.read()
-
+    
     def _parse_header_line(self, line, num_fields, cast_to):
         fields = [cast_to(x) for x in line.split()[:num_fields]]
         if num_fields == 1:
@@ -121,17 +123,13 @@ class NemesisMre:
                 self.retrieved_parameters.append(df)
 
 
-class NemesisXsc:
+class NemesisXsc(Parser):
     """Parser for the nemesis.xsc file
     
     Attributes:
         xsc (pd.DataFrame): The aerosol cross-sections as a function of wavelength for each aerosol mode
         ssa (pd.DataFrame): The single scattering albedos as a function of wavelength for each aerosol modes"""
     
-    def __init__(self, filepath):
-        self.filepath = Path(filepath)
-        self.read()
-
     def read(self):
         waves = []
         ssas = []
@@ -154,21 +152,18 @@ class NemesisXsc:
         self.xsc.insert(0, column="wavelength", value=waves)
             
 
-class NemesisItr:
+class NemesisItr(Parser):
     """Parser for nemesis.itr. Also requires a NemesisMre parser
     
     Attributes:
         state_vectors: pd.DataFrame containing the linear state vector for each iteration"""
     
     def __init__(self, filepath, mre=None):
-        self.filepath = Path(filepath)
-
         if mre is None:
-            self.mre = NemesisMre(self.filepath.parent / "nemesis.mre")
+            self.mre = NemesisMre(Path(filepath).parent / "nemesis.mre")
         else:
             self.mre = mre
-
-        self.read()
+        super().__init__(filepath)
 
     def read(self):
         data = []
@@ -202,11 +197,11 @@ class NemesisItr:
         self.state_vectors.columns = names
 
 
-class NemesisPrc:
-    def __init__(self, filepath):
-        self.filepath = Path(filepath)
-        self.read()
+class NemesisPrc(Parser):
+    """Parser for nemesis.prc
     
+    Attributes:
+        chisq (List[float]): List of chi-squared values"""
     def read(self):
         self.chisq = []
         with open(self.filepath) as file:
@@ -215,10 +210,39 @@ class NemesisPrc:
                     self.chisq.append(utils.get_floats_from_string(line)[0])
 
 
-class MakephaseOut:
+class NemesisInp(Parser):
+    """Parser for nemesis.inp
+    
+    Attributes:
+        wavelength (bool):      Whether to use wavelength or wavenumber
+        scattering (bool):      Whether to use a scattering run
+        linebyline (bool):      Whether to use line-by-line or corrrelated-k method
+        woff (float):           Wavelength offset
+        fmerror_path (str):     Path to the file contianing forward modelling errors for each wavelength
+        num_iterations (int):   Maximum number of iterations 
+        min_phi_change (float): Minimim percentage change in phi before terminating
+        num_spectra (int):      Number of spectra to retrieve
+        start_spectra (int):    ID of spectra to start with
+        sub_previous (bool):    Whether to use a previous retrieval
+        output_format (int):    Format of the output files
+    """
+    
+    def read(self):
+        with open(self.filepath) as file:
+            lines = file.read().split("\n")
+            self.wavelength, self.scattering, self.linebyline = map(bool, utils.get_ints_from_string(lines[0]))
+            self.woff, = utils.get_floats_from_string(lines[1])
+            self.fmerror_path = lines[2]
+            self.num_iterations, = utils.get_ints_from_string(lines[3])
+            self.min_phi_change, = utils.get_floats_from_string(lines[4])
+            self.num_spectra, self.start_spectra = utils.get_ints_from_string(lines[5])
+            self.sub_previous, = map(bool, utils.get_ints_from_string(lines[6]))
+            self.output_format, = utils.get_ints_from_string(lines[7])
+
+
+class MakephaseOut(Parser):
     def __init__(self, filepath):
-        self.filepath = Path(filepath)
-        self.read()
+        super().__init__(filepath)
         self.add_aerosol_names()
 
     def read(self):
@@ -254,15 +278,14 @@ class MakephaseOut:
                 names.append(m + " imag")
         
    
-class AerosolPrf:
+class AerosolPrf(Parser):
     """Parser for the aerosol.prf file
     
     Attributes:
         data: pd.DataFrame containing the aerosol density as a function of height. The units of aerosol density are particles per gram of atmosphere"""
     
     def __init__(self, filepath):
-        self.filepath = Path(filepath)
-        self.read()
+        super().__init__(filepath)
         self.add_aerosol_names()
 
     def read(self):

@@ -64,10 +64,9 @@ core = cores.NemesisCore(cd,
                          fmerror_factor=5,
                          num_iterations=2,
                          scattering=True,
-                         reference_wavelength=4)
-
-# Set some pressure limits - we only have sensitivity between approx 1mbar and 10bar
-core.set_pressure_limits(min_pressure=1e-3, max_pressure=10)
+                         reference_wavelength=4,
+                         min_pressure=1e-3, 
+                         max_pressure=10)
 
 # If there is a specific feature at a given wavelength that we want NEMESIS to always fit, we can use the fix_peak method
 core.fix_peak(central_wavelength=4.07, width=0.05)

@@ -38,5 +38,4 @@ MAKEPHASE_GASES = {"H2O": 3,
                    "Tholins": 5,
                    "CH4": 6,
                    "NH4SH": 7,
-                   "N2H4": 8,
-                   "H2SO4": 9} #: The IDs used by Makephase for looking up refractive indicies of the gases
+                   "N2H4": 8} #: The IDs used by Makephase for looking up refractive indicies of the gases

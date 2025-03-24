@@ -77,6 +77,8 @@ class NemesisResult:
         self.nemesis_prf = parsers.NemesisPrf(self.core_directory / "nemesis.prf")
         self.aerosol_prf.data["pressure"] = self.nemesis_prf.data["pressure"]
 
+        self.core.forward = True
+
         if not self.core.forward:
             self.itr = parsers.NemesisItr(self.core_directory / "nemesis.itr")
             self.itr.add_column_names(self.profiles)
@@ -268,11 +270,11 @@ class NemesisResult:
             if unit == "tau/bar":
                 # only god himself knows whats going on with these units...
                 x *= 1e5 / 10 / constants.GRAVITY[self.core.planet]
-                unit_label = f"Optical thickness / bar at {self.core.reference_wavelength:.1f}µm"
+                unit_label = f"Optical depth / bar at {self.core.reference_wavelength:.1f}µm"
             elif unit == "particles/g":
                 unit_label = f"Aerosol specific density (particles / gram) at {self.core.reference_wavelength:.1f}µm)"
             else:
-                raise ValueError("Invalid unit! - Must be one of 'tau/bar', 'particles/g'")
+                raise ValueError(f"Invalid unit! - Must be one of 'tau/bar', 'particles/g' - not {unit}")
             
             if x.max() > max_value:
                 max_value = x.max()
@@ -392,9 +394,9 @@ class NemesisResult:
         self.plot_gas_profiles(ax=axs["E"], gas_names=names)
 
         if self.core.forward:
-            fig.suptitle(f"Forward model in {self.core_directory.resolve()}", y=0.92)
+            fig.suptitle(f"Forward model in {self.core_directory.resolve()}", y=0.91)
         else:
-            fig.suptitle(f"Retrieval in {self.core_directory.resolve()}")
+            fig.suptitle(f"Retrieval in {self.core_directory.resolve()}", y=0.91)
 
         fig.savefig(self.core_directory / "plots/summary.png", bbox_inches="tight", dpi=400)
 

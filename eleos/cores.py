@@ -104,7 +104,7 @@ class NemesisCore:
         self.spx_file = Path(spx_file).resolve()
         self.planet = planet.lower()
         self.scattering = scattering
-        self.forward = forward
+        self._forward = forward
         self.num_iterations = num_iterations
         self.num_layers = num_layers
         self.instrument_ktables = instrument_ktables
@@ -171,13 +171,17 @@ class NemesisCore:
     def __str__(self):
         return f"<NemesisCore: {self.directory}>"
 
-    @classmethod
-    def from_old_core(cls, core_directory):
-        """Create a NemesisCore object from a core directory that was not created by Eleos. This is still WIP"""
-        core_directory = Path(core_directory)
-        raise NotImplementedError()
-        return cls(parent_directory=core_directory.parent,
-                   directory=None)
+    @property
+    def forward(self):
+        return self._forward
+    
+    @forward.setter
+    def forward(self, value):
+        self._forward = value
+        if value:
+            self.num_iterations = 0
+        else:
+            self.num_iterations = 30
 
     def _create_directory_tree(self, prompt_if_exists):
         os.makedirs(self.parent_directory, exist_ok=True)
@@ -189,7 +193,7 @@ class NemesisCore:
             else:
                 msg = "There is already data in"
 
-            x = input(f"{msg} {self.directory} - erase and continue? Y/N")
+            x = input(f"{msg} {self.directory.resolve()} - erase and continue? Y/N ")
             if x.lower() == "n":
                 return
             shutil.rmtree(self.directory)
@@ -924,7 +928,7 @@ def load_core(core_directory):
     # Refresh the directory attributes in the NemesisCore object in case the folder has been moved
     core.parent_directory = (core_directory / "..").resolve()
     core.directory = core_directory.resolve()
-
+    core._forward = False
     return core
 
 
@@ -987,7 +991,7 @@ def clear_parent_directory(parent_directory, confirm=True):
     parent_directory = Path(parent_directory)
     if os.path.exists(parent_directory):
         if confirm:
-            x = input(f"{parent_directory} already exists - are you sure you want to erase and continue? Y/N")
+            x = input(f"{parent_directory.resolve()} already exists - are you sure you want to erase and continue? Y/N ")
             if x.lower() == "n":
                 print("Quitting")
                 exit()
@@ -995,6 +999,52 @@ def clear_parent_directory(parent_directory, confirm=True):
                 shutil.rmtree(parent_directory)
         else:
             shutil.rmtree(parent_directory)
+
+
+def get_refractive_indicies(name, start_wl, end_wl, wl_step):
+    """Run Makephase to get the refractive indicies of the gases in the lookup tables.
+    
+    Args:
+        name (str): The gas name to use (see constants.MAKEPHGASE_GASES for a list)
+        start_wl: Start wavelength
+        end_wl: End wavelength
+        wl_step: Wavelength step size
+        
+    Returns:
+        pd.DataFrame: Dataframe containing the wavelength and the real and imaginary refractive indicies. Columns are: 'wavelength', 'real', and 'imag'
+    """
+    
+    # Make Makephase input file
+    with open(constants.PATH / "tmp/makephase.inp", mode="w+") as file:
+        file.write("1\n1\n")
+        utils.write_nums(file, start_wl, end_wl, wl_step)
+        file.write("tmp.xsc\ny\n1\n1\n1\n2\n")
+        file.write(str(constants.MAKEPHASE_GASES[name]))
+        if name == "Tholins":
+            file.write("\n1")
+
+    # Run Makephase
+    proc = subprocess.run(f"Makephase < makephase.inp", 
+                           shell=True,
+                           cwd=constants.PATH.resolve() / "tmp",
+                           capture_output=True)
+    
+    # Extract refractive indicies from stdout
+    real, imag = [], []
+    for line in proc.stdout.decode("ASCII").split("\n"):
+        if line.startswith(" Refractive index:"):
+            r, i = utils.get_floats_from_string(line)
+            real.append(r)
+            imag.append(i)
+
+    # Clean up tmp/
+    for fp in (constants.PATH / "tmp/").glob("*"):
+        if fp.is_file():
+            fp.unlink()
+
+    wavelengths = np.arange(start_wl, end_wl+wl_step, wl_step)
+    data = pd.DataFrame(np.array([wavelengths, real, imag]).T, columns=["wavelength", "real", "imag"])
+    return data
 
 
 def generate_alice_job(parent_directory, 
