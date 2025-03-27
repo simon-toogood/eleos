@@ -77,8 +77,6 @@ class NemesisResult:
         self.nemesis_prf = parsers.NemesisPrf(self.core_directory / "nemesis.prf")
         self.aerosol_prf.data["pressure"] = self.nemesis_prf.data["pressure"]
 
-        self.core.forward = True
-
         if not self.core.forward:
             self.itr = parsers.NemesisItr(self.core_directory / "nemesis.itr")
             self.itr.add_column_names(self.profiles)
@@ -488,7 +486,7 @@ def load_multiple_cores(parent_directory, raise_errors=True):
     return out
 
 
-def load_best_cores(parent_directory, n):
+def load_best_cores(parent_directory, n, raise_errors=True):
     """Load n cores from the parent_directory with the lowest chi-squared values.
 
     Args:
@@ -518,7 +516,15 @@ def load_best_cores(parent_directory, n):
 
     chis, dirs = zip(*sorted(zip(chisqs, dirs)))
 
-    return [NemesisResult(d) for d in dirs]
+    rs = []
+    for d in dirs:
+        try:
+            rs.append(NemesisResult(d))
+        except Exception as e:
+            if raise_errors:
+                raise e
+            
+    return rs
 
 
 def sort_key_paths(path):

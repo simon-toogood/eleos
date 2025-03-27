@@ -8,10 +8,8 @@ Adding a Shape subclass
 
 All subclasses of Shape must implement:
     - ID: Integer ID of the shape in NEMESIS
-    - NAMES: The names of the parameters in order they appear in the mre file (do not include error parameters here)
-    - __init__: Instantiates the parent class and defines:
-        - nemesis_code: The number of the profile in the NEMESIS manual
-        - Any parameters associated with the model (eg. knee pressure, fsh etc). These MUST be defined in the order that they appear in the .apr file
+    - CONSTANTS: The names of parameters that are not fitted by NEMESIS but required for the model
+    - VARIABLES: The names of the parameters in order they appear in the mre file (do not include error parameters here). **These MUST be defined in the order that they appear in the .apr file!!**
     - generate_apr_data: Returns a string of the profile shape parameters in the format
                          that the .apr file expects.
 
@@ -26,7 +24,8 @@ Class template::
     class ShapeN(Shape):
         "copy the desciption from the NEMESIS manual here (use triple quotes!)"
         ID: ClassVar[int] = N
-        NAMES:  ClassVar[list[str]] = ["arg_name_1", "arg_name_2", ...]
+        CONSTANTS: ClassVar[list[str]] = ["arg_name_1", ...]
+        VARIABLES: ClassVar[list[str]] = ["arg_name_2", "arg_name_3", ...]
         arg_name_1: type_1
         arg_name_2: type_2
         arg_name_2_error: type_2
@@ -63,7 +62,7 @@ class Shape:
     
     def _set_prior_to_retrieved(self):
         """Set the prior values to the retrieved values and delete the retrived_* attributes."""
-        for base in self.NAMES:
+        for base in self.VARIABLES:
             for name in [base, f"{base}_error"]:
                 try:
                     setattr(self, name, getattr(self, "retrieved_"+name))
@@ -85,6 +84,7 @@ class Shape:
         """Some Shapes require additional files to be created/copied into the core directory"""
         pass
 
+
 @shapeclass
 class Shape0(Shape):
     """Profile is to be treated as continuous over the pressure range of runname.ref, the
@@ -92,7 +92,8 @@ class Shape0(Shape):
     priori profile as a function of height and should have the same number of levels
     as the .ref file."""
     ID: ClassVar[int] = 0
-    NAMES: ClassVar[list[str]] = ["None"]
+    CONSTANTS: ClassVar[list[str]] = []
+    VARIABLES: ClassVar[list[str]] = []
     filepath: str
 
     def create_required_files(self, directory):
@@ -108,7 +109,8 @@ then a defined fractional scale height. The next line of the .apr file then cont
 the ‘knee’ pressure, followed by the a priori deep and fractional scale height
 values together with their estimated errors. """
     ID: ClassVar[int] = 1
-    NAMES: ClassVar[list[str]] = ["deep_vmr", "fsh"]
+    CONSTANTS: ClassVar[list[str]] = ["knee_pressure"]
+    VARIABLES: ClassVar[list[str]] = ["deep_vmr", "fsh"]
     knee_pressure: float
     deep_vmr: float
     deep_vmr_error: float
@@ -125,7 +127,8 @@ runname.ref (for T, v.m.r.), aerosol.ref (for aerosol density), parah2.ref (for
 para-H2 fraction) or fcloud.ref (for fractional cloud cover). The next line of the
 .apr file then contains the a priori factor and error."""
     ID: ClassVar[int] = 2
-    NAMES: ClassVar[list[str]] = ["scale_factor"]
+    CONSTANTS: ClassVar[list[str]] = []
+    VARIABLES: ClassVar[list[str]] = ["scale_factor"]
     scale_factor: float
     scale_factor_error: float
 
@@ -139,7 +142,8 @@ represented as a deep value up to a certain 'knee' pressure, and then a defined
 fractional scale height. However, in this case the knee pressure is also a variable
 parameter and thus must be supplied with an error estimate."""
     ID: ClassVar[int] = 4
-    NAMES: ClassVar[list[str]] = ["deep_vmr", "fsh", "knee_pressure"]
+    CONSTANTS: ClassVar[list[str]] = []
+    VARIABLES: ClassVar[list[str]] = ["deep_vmr", "fsh", "knee_pressure"]
     knee_pressure: float
     knee_pressure_error: float
     deep_vmr: float
@@ -159,7 +163,8 @@ than a ‘tropopause’ temperature. The next line of the .apr file then contain
 ‘knee’ and ‘tropopause’ pressures, followed by the a priori deep and fractional
 scale height values together with their estimated errors.e."""
     ID: ClassVar[int] = 20
-    NAMES: ClassVar[list[str]] = ["deep_vmr", "fsh"]
+    CONSTANTS: ClassVar[list[str]] = ["knee_pressure", "tropopause_pressure"]
+    VARIABLES: ClassVar[list[str]] = ["deep_vmr", "fsh"]
     knee_pressure: float
     tropopause_pressure: float
     deep_vmr: float
@@ -182,7 +187,8 @@ than the base pressure is set to drop exponentially with increasing pressure wit
 a scale height of 1km, rather than just being set to zero. This makes it easier for
 NEMESIS to actually find an optimal value of the knee pressure."""
     ID:  ClassVar[int] = 32
-    NAMES: ClassVar[list[str]] = ["opacity", "fsh", "base_pressure"]
+    CONSTANTS: ClassVar[list[str]] = []
+    VARIABLES: ClassVar[list[str]] = ["opacity", "fsh", "base_pressure"]
     base_pressure: float
     base_pressure_error: float
     opacity: float
@@ -199,7 +205,8 @@ class Shape37(Shape):
 (measured in bar). The next line of the .apr file then contains the two pressures
 (in bar) in the order high - low, followed by the a priori opacity/bar and error"""
     ID: ClassVar[int] = 37
-    NAMES:  ClassVar[list[str]] = ["opacity"]
+    CONSTANTS: ClassVar[list[str]] = ["bottom_pressure", "top_pressure"]
+    VARIABLES: ClassVar[list[str]] = ["opacity"]
     bottom_pressure: float
     top_pressure: float
     opacity: float
@@ -216,7 +223,8 @@ the .apr file then contains the a priori opacity, the a priori pressure where th
 distribution peaks, and the a priori width (in units of log pressure), with their
 respective errors."""
     ID: ClassVar[int] = 47
-    NAMES:  ClassVar[list[str]] = ["opacity", "central_pressure", "pressure_width"]
+    CONSTANTS: ClassVar[list[str]] = []
+    VARIABLES: ClassVar[list[str]] = ["opacity", "central_pressure", "pressure_width"]
     central_pressure: float
     central_pressure_error: float
     pressure_width: float
@@ -235,7 +243,8 @@ top pressure. The next line of the .apr file then contains the a priori base
 pressure, followed by the a priori top pressure, opacity and fractional scale
 height values together with their estimated errors."""
     ID:  ClassVar[int] = 48
-    NAMES: ClassVar[list[str]] = ["opacity", "fsh", "base_pressure", "top_pressure"]
+    CONSTANTS: ClassVar[list[str]] = []
+    VARIABLES: ClassVar[list[str]] = ["opacity", "fsh", "base_pressure", "top_pressure"]
     base_pressure: float
     base_pressure_error: float
     top_pressure: float

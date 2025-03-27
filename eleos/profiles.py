@@ -25,8 +25,7 @@ class Profile:
 
     def __setattr__(self, name, value):
         try:
-            print(name, value, get_parameter_names(self.shape.NAMES, retrieved=True))
-            if name in get_parameter_names(self.shape.NAMES, retrieved=True):
+            if name in get_parameter_names(self.shape.VARIABLES, retrieved=True) + self.shape.CONSTANTS:
                 self.shape.__setattr__(name, value)
         except:
             pass
@@ -35,7 +34,7 @@ class Profile:
 
     def __getattr__(self, name):
         try:
-            if name in get_parameter_names(super().__getattribute__("shape").NAMES, retrieved=True):
+            if name in get_parameter_names(super().__getattribute__("shape").VARIABLES, retrieved=True) + self.shape.CONSTANTS:
                 return self.shape.__getattribute__(name)
         except:
             pass
@@ -51,7 +50,7 @@ class Profile:
         Returns:
             None"""
         
-        for name in self.shape.NAMES:
+        for name in self.shape.VARIABLES:
             for attr in [f"retrieved_{name}", f"retrieved_{name}_error"]:
                 delattr(self.shape, attr)
         self.retrieved = False
@@ -79,6 +78,21 @@ class Profile:
         new_profile.core = result.core
 
         return new_profile
+
+    def _get_displayable_attributes(self, extra_consts=list(), extra_vars=list()):
+        """Get the parameters that define the profile"""
+        groups = defaultdict(list)
+
+        for name in self.shape.CONSTANTS + extra_consts:
+            groups[name].append(name)
+        for name in self.shape.VARIABLES + extra_vars:
+            groups[name].append(name)
+            groups[name].append(name + "_error")
+            if self.retrieved:
+                groups[name].append("retrieved_" + name)
+                groups[name].append("retrieved_" + name + "_error")
+
+        return groups
 
     def print_table(self, colors=True, **kwargs):
         if not self.retrieved:
@@ -203,7 +217,8 @@ class GasProfile(Profile):
         if shape is None:
             raise ValueError("shape attribute must be specified")
         self.shape = shape
-        self.NAMES = self.shape.NAMES
+        self.VARIABLES = self.shape.VARIABLES
+        self.CONSTANTS = self.shape.CONSTANTS
 
         if not ((gas_id is None) ^ (gas_name is None)):
             raise ValueError("Specifiy exactly one of gas_name or gas_id (not both!)")
@@ -219,24 +234,6 @@ class GasProfile(Profile):
 
     def __repr__(self):
         return f"<GasProfile {self.gas_name} [{self.create_nemesis_string()}]>"
-
-    def _get_displayable_attributes(self):
-        def sort_key(name):
-            prefix = name.startswith("retrieved_")
-            error = name.endswith("_error")
-            return (prefix * 2 + error, name)
-        
-        groups = defaultdict(list)
-
-        # Populate dictionary
-        for name in self.shape.__dict__:
-            core_name = re.sub(r"^retrieved_", "", name).split('_')[0]
-            groups[core_name].append(name)
-
-        # Convert to list of grouped names
-        grouped = [sorted(x, key=sort_key) for x in list(groups.values())]
-
-        return [g for g in grouped if g[0] not in ("label", "gas_id", "isotope_id", "retrieved", "core", "shape", "NAMES")]
 
     def _create_profile_from_previous_retrieval(prev):
         return GasProfile(gas_name=prev.gas_name, 
@@ -256,7 +253,7 @@ class GasProfile(Profile):
         self.retrieved = True
         
         # Get order of parameters
-        names = self.shape.NAMES
+        names = self.shape.VARIABLES
         assert len(names) == len(df)
 
         # Set attributes of the child Shape object
@@ -339,14 +336,13 @@ class AerosolProfile(Profile):
         # Assign basic parameters
         self.aerosol_id = "UNASSIGNED"
         self.shape = shape
-        self.NAMES = self.shape.NAMES + ["radius", "variance", "imag_n"]
         self.retrieve_optical = retrieve_optical
 
         # Set particle properties
         self.radius = radius
         self.variance = variance
 
-        # Set either n_lookup or ral_n and imag_n
+        # Set either n_lookup or real_n and imag_n
         if n_lookup is None:
             self.real_n = real_n
             self.imag_n = imag_n
@@ -357,35 +353,21 @@ class AerosolProfile(Profile):
 
         # Set the prior errors if retrieving
         if retrieve_optical:
+            self.CONSTANTS = self.shape.CONSTANTS
+            self.VARIABLES = self.shape.VARIABLES + ["radius", "variance", "imag_n"]
             self.radius_error = radius_error
             self.variance_error = variance_error
             self.imag_n_error = imag_n_error
             if radius_error is None or variance_error is None or imag_n_error is None:
-                raise ValueError("Cannot retireve optical properties without specified errors. Did you remember to set radius_error, variance_error, or imag_n_error?")
+                raise ValueError("Cannot retrieve optical properties without specified errors. Did you remember to set radius_error, variance_error, or imag_n_error?")
         else:
+            self.CONSTANTS = self.shape.CONSTANTS + ["radius", "variance", "imag_n"]
+            self.VARIABLES = self.shape.VARIABLES
             if radius_error is not None or variance_error is not None or imag_n_error is not None:
                 raise ValueError("Cannot specify errors for radius/variance.imag_n without retrieving optical peroperties. Did you forget to set retrieve_optical=True?")
 
     def __repr__(self):
         return f"<AerosolProfile {self.label} [{self.create_nemesis_string()}]>"
-
-    def _get_displayable_attributes(self):
-        def sort_key(name):
-                prefix = name.startswith("retrieved_")
-                error = name.endswith("_error")
-                return (prefix * 2 + error, name)
-        
-        groups = defaultdict(list)
-
-        # Populate dictionary
-        for name in self.shape.__dict__ | self.__dict__:
-            core_name = re.sub(r"^retrieved_", "", name).split('_')[0]
-            groups[core_name].append(name)
-
-        # Convert to list of grouped names
-        grouped = [sorted(x, key=sort_key) for x in list(groups.values())]
-
-        return [g for g in grouped if g[0] not in ("label", "retrieved", "core", "aerosol_id", "NAMES", "retrieve_optical", "shape", "lookup")]
 
     def _add_result(self, df, df_444=None):
         """Take in a DataFrame created by reading in the .mre file (results.NemesisResult.read_mre) and assign the correct attributes
@@ -398,7 +380,7 @@ class AerosolProfile(Profile):
             None"""
 
         # Get order of parameters
-        names = self.shape.NAMES
+        names = self.shape.VARIABLES
         assert len(names) == len(df)
 
         # Set attributes of the child Shape object
@@ -462,6 +444,9 @@ class AerosolProfile(Profile):
                                       retrieve_optical=False)
         prof.aerosol_id = prev.aerosol_id
         return prof
+
+    def _get_displayable_attributes(self):
+        return super()._get_displayable_attributes(extra_vars=["radius", "varaince", "imag_n"])
 
     def create_nemesis_string(self):
         """Create the NEMESIS code that represents the aerosol profile (eg. -1 0 32)

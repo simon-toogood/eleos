@@ -193,7 +193,7 @@ class NemesisItr(Parser):
     def add_column_names(self, profiles):
         names = []
         for label, profile in profiles.items():
-            names += [f"{label} {n}" for n in profile.NAMES]
+            names += [f"{label} {n}" for n in profile.VARIABLES]
         self.state_vectors.columns = names
 
 

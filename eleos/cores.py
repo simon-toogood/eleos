@@ -880,6 +880,7 @@ class NemesisCore:
         Returns:
             None
         """
+        
         print("Generating random priors...")
         for label, profile in self.profiles.items():
             for name in profile.NAMES:
