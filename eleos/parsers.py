@@ -12,6 +12,7 @@ from . import profiles as profiles_
 
 
 ## TODO: Move all parsing routines here, .itr, .prc etc...
+## I also want to be ablet o completely reconstruct the core object from these files so no pickling of NemesisCore needed
 
 
 class Parser:

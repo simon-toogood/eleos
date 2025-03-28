@@ -77,6 +77,7 @@ class NemesisResult:
         self.nemesis_prf = parsers.NemesisPrf(self.core_directory / "nemesis.prf")
         self.aerosol_prf.data["pressure"] = self.nemesis_prf.data["pressure"]
 
+        # Parse the iterations file for retrievals
         if not self.core.forward:
             self.itr = parsers.NemesisItr(self.core_directory / "nemesis.itr")
             self.itr.add_column_names(self.profiles)
@@ -85,7 +86,8 @@ class NemesisResult:
         self.__dict__ |= self.mre.__dict__
         self.retrieved_aerosols = self.aerosol_prf.data
         self.retrieved_gases = self.nemesis_prf.data
-        self.chi_sq = self.get_chi_sq()
+        self.chi_sqs = self._get_chi_squareds()
+        self.chi_sq = self.chi_sqs[-1]
 
         # Add results to the profiles
         self._add_results_to_profiles()
@@ -101,44 +103,40 @@ class NemesisResult:
             else:
                 profile._add_result(self.mre.retrieved_parameters.pop(0))
 
-    def _read_nemesis_prf(self):
-        with open(self.core_directory / "nemesis.prf") as file:
-            lines = file.read().split("\n")
+    def _get_chi_squareds(self):
+        """Read the .prc file and cache the chi squared values to a new .chi file if not already done.
+        Otherwise, read the .chi file and return the chi squared values
         
-        names = []
-        for i, line in enumerate(lines):
-            # Skip first two lines and any blank lines
-            if i in (0,1) or line == "":
-                continue
-
-            # Get the index of the starting line for the profiles
-            if "height" in line:
-                break
+        Args:
+            None
+        
+        Returns:
+            None
             
-            # Otherwise it's a gas id
+        Creates:
+            nemesis.chi"""
+
+        if (self.core_directory / "nemesis.chi").is_file():
+            with open(self.core_directory / "nemesis.chi") as file:
+                for line in file:
+                    return [float(line) for line in file]
+        else:
+            # Pattern to match to find values in the .prc file
+            if self.core.forward:
+                pattern = "chisq/ny is equal to :    "
             else:
-                gas_id, isotope_id = [int(x) for x in re.findall(r'\d+', line)]
-                gas_name = constants.GASES[constants.GASES.radtrans_id == gas_id].name.iloc[0]
-                names.append(f"{gas_name} {isotope_id}")
+                pattern = "chisq/ny =    "
 
-        out = pd.read_table(self.core_directory / "nemesis.prf", skiprows=i+1, sep="\s+")
-        out.columns = ["height", "pressure", "temp"] + names
+            # Parse the .prc file
+            with open(self.core_directory / "nemesis.prc") as file:
+                lines = [line for line in file if pattern in line]
+                values = [float(re.findall(r"[-+]?\d*\.\d+|\d+", line)[0]) for line in lines]  # Extract all floats
+            
+            # Write results to .chi file
+            with open(self.core_directory / "nemesis.chi", "w+") as file:
+                file.write("\n".join(map(str, values)))
 
-        return out
-
-    def get_chi_sq(self, all_iterations=False):
-        """Get the chi squared values from the .prc file. If all_iterations is True, return a list containing chi squared values for all iterations"""
-        if self.core.forward:
-            pattern = "chisq/ny is equal to :    "
-        else:
-            pattern = "chisq/ny =    "
-        with open(self.core_directory / "nemesis.prc") as file:
-            lines = [line for line in file if pattern in line]
-            values = [float(re.findall(r"[-+]?\d*\.\d+|\d+", line)[0]) for line in lines]  # Extract all floats
-        if all_iterations:
             return values
-        else:
-            return values[-1]
 
     def print_summary(self, colors=False):
         print(f"Summary of retrieval in {self.core_directory}")

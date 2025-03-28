@@ -6,6 +6,7 @@ import signal
 import os
 import shutil
 import subprocess
+from collections import defaultdict
 from pathlib import Path
 
 import pandas as pd
@@ -601,7 +602,7 @@ class NemesisCore:
                 if isinstance(profile, profiles_.AerosolProfile):
                     file.write(name + "\n")
             file.truncate(file.tell() - 1)
-
+        
     def _get_xsc_wavelengths(self, step):
         """Get the wavelengths for use in Makephase, including the full data range and, if necessary, 
         expanding to include the reference wavelength specified. 
@@ -897,6 +898,52 @@ class NemesisCore:
                     continue
         print("Generated priors!")
 
+    def get_profile_variable_names(self):
+        """Return the names of the variables in each profile. 
+        See also: `get_profile_constant_names` and get_profile_parameter_names`
+        
+        Args:
+            None
+            
+        Returns:
+            dict: Dictionary of the form {profile_label: [variable names, ...]}"""
+        
+        out = dict()
+        for label, profile in self.profiles.items():
+            out[label] = profile.VARIABLES
+        return out
+
+    def get_profile_constant_names(self):
+        """Return the names of the constants in each profile. 
+        See also: `get_profile_constant_names` and get_profile_parameter_names`
+        
+        Args:
+            None
+            
+        Returns:
+            dict: Dictionary of the form {profile_label: [variable names, ...]}"""
+        
+        out = dict()
+        for label, profile in self.profiles.items():
+            out[label] = profile.CONSTANTS
+        return out
+    
+    def get_profile_parameter_names(self):
+        """Return the names of the parameters (variables and constants) in each profile. 
+        See also: `get_profile_constant_names` and get_profile_parameter_names`
+        
+        Args:
+            None
+            
+        Returns:
+            dict: Dictionary of the form {profile_label: [variable names, ...]}"""
+        
+        out = dict()
+        for label, profile in self.profiles.items():
+            out[label] = profile.VARIABLES
+            out[label] += profile.CONSTANTS
+        return out
+    
 
 class FixedPeak:
     """Used internally to specify if any spectral regions should be fixed so that NEMESIS always fits it there. Don't instantiate, instead use NemesisCore.fix_peak"""

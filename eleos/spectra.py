@@ -68,8 +68,12 @@ def downsample_spectra(spectra, wavelengths, num_points):
     return spectra[idx], wavelengths[idx]
 
 
-def remove_nonlte_emission(spectra, wavelengths, h3p_threshold=0.1, ch4_threshold=0.1, expand=0):
-    """Use a model to chop out any parts of the spectrum where H3+ and CH4 non-LTE
+def get_nonlte_emission_mask(wavelengths, 
+                             h3p_threshold=0.1, 
+                             ch4_threshold=0.1, 
+                             h3p_expand=0, 
+                             ch4_expand=0):
+    """Use a model to mask out any parts of the spectrum where H3+ and CH4 non-LTE
     emission is above a threshold relative to their highest peaks.
     
     Args:
@@ -77,11 +81,23 @@ def remove_nonlte_emission(spectra, wavelengths, h3p_threshold=0.1, ch4_threshol
         wavelengths (np.ndarray): The corresponding wavelengths
         h3p_threshold (float): The threshold above which to exclude data due to H3+ emission
         ch4_threshold (float): The threshold above which to exclude data due to CH4 emission
-        expand (int): If non-zero, then expand and excluded regions to include the nearest `expand` wavelengths
-        
+        h3p_expand (int): If non-zero, then expand and excluded regions to include the nearest `expand` wavelengths
+        ch4_expand (int): If non-zero, then expand and excluded regions to include the nearest `expand` wavelengths
+
     Returns:
-        spectra (np.ndarray): The trimmed spectra
-        wavelengths (np.ndarray): The trimmed wavelengths"""
+        np.ndarray: The H3+ mask
+        np.ndarray: The CH4 mask
+    """
+    
+    def expand_mask(mask, by):
+        arr = mask.copy()
+        for i in range(1, by+1):
+            rolled_fwd = np.roll(mask, (i))
+            rolled_fwd[:i] = 0
+            rolled_bck = np.roll(mask, -i)
+            rolled_bck[-i:] = 0
+            arr = arr | rolled_fwd | rolled_bck
+        return arr
     
     if not (2.8 < wavelengths[0] < 5.3 and 2.8 < wavelengths[-1] < 5.3):
         raise NotImplementedError("Non-LTE subtraction only works for G395H data at the moment.")
@@ -89,25 +105,18 @@ def remove_nonlte_emission(spectra, wavelengths, h3p_threshold=0.1, ch4_threshol
     h3p = pd.read_csv(constants.PATH / "data/misc/H3p_G395H_model.txt", sep=" ", names=["wavelengths", "spectrum"])
     ch4 = pd.read_csv(constants.PATH / "data/misc/CH4_G395H_model.txt", sep=" ", names=["wavelengths", "spectrum"])
 
-    mask = []
+    h3p_mask = []
+    ch4_mask = []
+
     for w in wavelengths:
         i, _ = utils.find_nearest(h3p.wavelengths, w)
-        h3p_flag = (h3p.spectrum[i] / np.nanmax(h3p.spectrum)) > h3p_threshold
-        ch4_flag = (ch4.spectrum[i] / np.nanmax(ch4.spectrum)) > ch4_threshold
-        mask.append(h3p_flag or ch4_flag)
-    
-    print(mask)
-    for _ in range(expand):
-        new = mask.copy()
-        for i in range(1, len(mask)-1):
-            if mask[i-1] or mask[i+1]:
-                new[i] = 1
-        mask = new
-        print(mask)
-    
-    mask = ~np.array(mask)
-    
-    return spectra[mask], wavelengths[mask]
+        h3p_mask.append((h3p.spectrum[i] / np.nanmax(h3p.spectrum)) > h3p_threshold)
+        ch4_mask.append((ch4.spectrum[i] / np.nanmax(ch4.spectrum)) > ch4_threshold)
+
+    h3p_mask = expand_mask(np.array(h3p_mask), h3p_expand)
+    ch4_mask = expand_mask(np.array(ch4_mask), ch4_expand)
+
+    return h3p_mask, ch4_mask
 
 
 def multiple_cube_average(cubes):
@@ -147,12 +156,21 @@ def add_error_cubes(observations):
     return observations
 
 
-def get_single_spectra(file_patten, out_filename=None, max_emission=99, margins=0, pct_error=0, num_points=None, min_wl=-999, max_wl=999):
+def get_single_spectra(file_pattern, 
+                       out_filename=None, 
+                       max_emission=99, 
+                       margins=0, 
+                       pct_error=0, 
+                       num_points=None, 
+                       min_wl=-999, 
+                       max_wl=999, 
+                       remove_nonlte=True, 
+                       **nonlte_kwargs):
     """Get a single spectrum from multiple observations, with options to restrict emission angle, downsample, and restrict wavelength range. 
        Saves the output to a .spx file.
 
        Args:
-           file_patten (str):    File pattern to match observation files.
+           file_pattern (str):   File pattern to match observation files.
            out_filename (str):   Output filename template for saving the processed spectrum (if None then don't save). 
                                  This can contain any of the parameters passed into the function surrounded 
                                  by curly braces. eg. spectra_n{num_points}.spx will become spectra_n80.spx 
@@ -163,7 +181,9 @@ def get_single_spectra(file_patten, out_filename=None, max_emission=99, margins=
            num_points (int):     Number of points to downsample the spectrum to.
            min_wl (float):       Minimum wavelength in the spectrum.
            max_wl (float):       Maximum wavelength in the spectrum.
-
+           remove_nonlte (bool): Whether to remove non-LTE emission from the spectrum.
+           nonlte_kwargs:        Keyword arguments to pass to get_nonlte_emission_mask.
+           
        Returns:
            np.ndarray: The wavelengths in the new .spx file
            np.ndarray: The radiances in the new spx file (returns MJy/sr, writes uW/cm2/sr/um to the .spx file)
@@ -171,7 +191,7 @@ def get_single_spectra(file_patten, out_filename=None, max_emission=99, margins=
     """
     
     params = locals().copy()
-    observations = get_observations(file_patten)
+    observations = get_observations(file_pattern)
     wavelengths = observations[0].get_wavelengths_from_header()
 
     cubes = []
@@ -198,7 +218,11 @@ def get_single_spectra(file_patten, out_filename=None, max_emission=99, margins=
     w = wavelengths
     s = multiple_cube_average(cubes)
     s, w = trim_spectra(s, w, min_wl=min_wl, max_wl=max_wl)
-    s, w = remove_nonlte_emission(s, w, expand=0)
+
+    if remove_nonlte:
+        h3p_mask ,ch4_mask = get_nonlte_emission_mask(w, **nonlte_kwargs)
+        s = s[h3p_mask | ch4_mask]
+        w = w[h3p_mask | ch4_mask]
 
     if num_points is not None:
         s, w = downsample_spectra(s, w, num_points=num_points)
