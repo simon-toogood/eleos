@@ -5,10 +5,10 @@ import sys
 import signal
 import os
 import shutil
+import copy
 import subprocess
 from collections import defaultdict
 from pathlib import Path
-
 import pandas as pd
 import numpy as np
 
@@ -718,7 +718,7 @@ class NemesisCore:
     def run(self):
         """Run NEMESIS on the core. This method should only be used for short forward models as
         it does not schedule the jobs on the ALICE compute nodes (see run_alice_job() for that), 
-        instead running it on the login node.
+        instead running it in the current terminal.
         
         Args:
             None
@@ -976,7 +976,6 @@ def load_core(core_directory):
     # Refresh the directory attributes in the NemesisCore object in case the folder has been moved
     core.parent_directory = (core_directory / "..").resolve()
     core.directory = core_directory.resolve()
-    core._forward = False
     return core
 
 
@@ -1008,6 +1007,62 @@ def load_from_previous(previous_directory, parent_directory, confirm=True):
         core.add_profile(profile.from_previous_retrieval(res, label))
 
     return core
+
+
+def create_sensitivity_analysis(template_core, generate_cores=True):
+    """Create a sensitivity analysis by varying the parameters in the template core by a small amount. This is done by
+    creating a new core for each parameter in each profile, and varying that parameter by a small amount (default 1%).
+    
+    Args:
+        template_core (NemesisCore): The cre to use as a template
+        generate_cores (bool): Whether to generate the cores or just return the list of cores to be generated
+        
+    Returns:
+        List[NemesisCore]: A list of new cores with the parameters varied"""
+    
+    global CORE_ID_COUNTER
+
+    # Create a file that stored which parameters were varied and by how much for each core
+    file = open(f"{template_core.parent_directory}/sensitivity_analysis.txt", "w+")
+    file.write("Core ID,Profile Label,Parameter,Base Value,Shifted Value,Factor\n")
+    cores = [template_core]
+
+    # Generate the template core if requested
+    if generate_cores:
+        template_core.forward = True
+        template_core.generate_core()
+
+    # Iterate through every parameter in every profile in the template core
+    for label, params in template_core.get_profile_parameter_names().items():
+        for param in params:
+            # Vary the parameter value by 80% to 120%
+            for factor in [0.80, 0.90, 0.95, 1.05, 1.10, 1.20]:
+
+                # Copy the core (deep copy to make sure nothing is passed by reference)
+                core = copy.deepcopy(template_core)
+
+                # Increment core ID counter manually
+                CORE_ID_COUNTER += 1
+                core.id_ = CORE_ID_COUNTER
+
+                # Set to forward mode and change the core directory
+                core.directory = core.parent_directory / f"core_{core.id_}"
+                core.forward = True
+
+                # Get and modify the parameter value and log it in the parameter file
+                base_value = getattr(core.profiles[label], param)
+                setattr(core.profiles[label], param, base_value * factor)
+                cores.append(core)
+                file.write(f"{core.id_},{label},{param},{base_value},{base_value * factor},{factor}\n")
+
+                # Generate the cores if requested
+                if generate_cores:
+                    core.generate_core()
+
+    # Always close your files, kids!
+    file.close()
+    
+    return cores
 
 
 def reset_core_numbering(): 
@@ -1100,7 +1155,8 @@ def generate_alice_job(parent_directory,
                        memory=16, 
                        hours=24,
                        username=None,
-                       notify=("end", "fail")):
+                       notify=("end", "fail"),
+                       type_="normal"):
     """Generate an sbatch submission script for use on ALICE. The job is an array job over all the specified cores.
     After running NEMESIS it will run Eleos to create some summary plots in the parent/core_N/plots directory
     
@@ -1111,6 +1167,7 @@ def generate_alice_job(parent_directory,
         hours (int): The number of hours to schedule the job for
         username (str): The username of the user running the job (eg, scat2, lnf2)
         notify (List[str] or str): What email notifications to send. Can be any combination of 'begin', 'end', 'fail'
+        type_ (str): The type of job to run. Can be 'normal' or 'sensitivity'. This will determine how Eleos is run at the end of the job.
         
     Returns:
         None
@@ -1147,6 +1204,7 @@ def generate_alice_job(parent_directory,
     # Write the filled template 
     with open(script_path, mode="w+") as file:
         file.write(out)
+
 
 
 def run_alice_job(parent_directory, print_queue_delay=2):

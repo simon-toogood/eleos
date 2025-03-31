@@ -353,7 +353,7 @@ class AerosolProfile(Profile):
 
         # Set the prior errors if retrieving
         if retrieve_optical:
-            self.CONSTANTS = self.shape.CONSTANTS
+            self.CONSTANTS = self.shape.CONSTANTS + ["real_n"]
             self.VARIABLES = self.shape.VARIABLES + ["radius", "variance", "imag_n"]
             self.radius_error = radius_error
             self.variance_error = variance_error
@@ -361,7 +361,7 @@ class AerosolProfile(Profile):
             if radius_error is None or variance_error is None or imag_n_error is None:
                 raise ValueError("Cannot retrieve optical properties without specified errors. Did you remember to set radius_error, variance_error, or imag_n_error?")
         else:
-            self.CONSTANTS = self.shape.CONSTANTS + ["radius", "variance", "imag_n"]
+            self.CONSTANTS = self.shape.CONSTANTS + ["radius", "variance", "real_n", "imag_n"]
             self.VARIABLES = self.shape.VARIABLES
             if radius_error is not None or variance_error is not None or imag_n_error is not None:
                 raise ValueError("Cannot specify errors for radius/variance.imag_n without retrieving optical peroperties. Did you forget to set retrieve_optical=True?")

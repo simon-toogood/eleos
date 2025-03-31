@@ -8,6 +8,9 @@ import numpy as np
 from functools import wraps
 from pathlib import Path
 
+import warnings
+warnings.formatwarning = lambda msg, *_: f"Warning: {msg}\n"
+
 from . import profiles
 from . import utils
 from . import cores
@@ -60,6 +63,7 @@ class NemesisResult:
         retrieved_aerosols (pandas.DataFrame):  A DataFrame containing the retrieved aerosol profiles
         retrieved_gases (pandas.DataFrame):     A DataFrame containing the retrieved chemical profiles
     """
+
     def __init__(self, core_directory): 
         """Constructor for NemesisResult
         
@@ -118,8 +122,7 @@ class NemesisResult:
 
         if (self.core_directory / "nemesis.chi").is_file():
             with open(self.core_directory / "nemesis.chi") as file:
-                for line in file:
-                    return [float(line) for line in file]
+                return [float(line) for line in file]
         else:
             # Pattern to match to find values in the .prc file
             if self.core.forward:
@@ -462,6 +465,106 @@ class NemesisResult:
         del self
 
 
+class SensitivityAnalysis:
+    def __init__(self, parent_directory):
+        self.parent_directory = Path(parent_directory)
+        self.cores = load_multiple_cores(parent_directory)
+        self.baseline = self.cores[0]
+        self.params = pd.read_csv(self.parent_directory / "sensitivity_analysis.txt")
+    
+    def _get_all_params(self):
+        out = []
+        prev = (None, None)
+        for i, row in self.params.iterrows():
+            x = (row["Profile Label"], row["Parameter"])
+            if x != prev:
+                out.append((row["Profile Label"], row["Parameter"]))
+                prev = x
+        return out
+
+    def _get_params(self, profile_label, parameter):
+        """Filter the params DataFrame to get the rows that match the given profile label and parameter."""
+        return self.params[(self.params["Parameter"] == parameter) & (self.params["Profile Label"] == profile_label)]
+
+    def get_results(self, profile_label, parameter):
+        """Get the cores that varied the given parameter in the given profile.
+        
+        Args:
+            profile_label: The label of the profile
+            parameter: The parameter that was varied
+            
+        Returns:
+            list[NemesisResult]: A list of NemesisResult objects that varied the given parameter in the given profile"""
+        
+        out = []
+        for _, case in self._get_params(profile_label, parameter).iterrows():
+            out.append(self.cores[case["Core ID"] - 1])
+        return out
+        
+    @plotting
+    def plot_parameter(self, ax, profile_label, parameter):
+        """Plot the sensitivity of the model to the given parameter in the given profile.
+        
+        Args:
+            ax: The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes
+            profile_label: The label of the profile to plot
+            parameter: The variable to plot
+            
+        Returns:
+            matplotlib.Figure: The Figure object to which the Axes belong
+            matplotlib.Axes: The Axes object onto which the data was plotted"""
+        
+        def alpha_map(x, V, min_alpha):
+            return 1 - (np.abs(x-1)/V) * (1 - min_alpha)
+
+        df = self._get_params(profile_label, parameter)
+        ress = self.get_results(profile_label, parameter)
+        base = self.baseline.retrieved_spectrum.model
+
+        for factor, r in zip(df["Factor"], ress):
+            ax.plot(r.retrieved_spectrum.wavelength, 
+                    r.retrieved_spectrum.model / base, 
+                    alpha=alpha_map(factor, 1-df["Factor"].min(), 0.25), 
+                    color="r" if factor > 1 else "b",
+                    label=factor)
+            
+        ax.set_ylabel(f"Change from baseline")
+        ax.set_xlabel("Wavelength (µm)")
+        ax.yaxis.set_major_formatter(mpl.ticker.PercentFormatter(1.0))
+        ax.axhline(1, c="k", ls="dashed")
+
+    def make_parameters_plot(self):
+        p = self._get_all_params()
+        fig, axs = plt.subplots(len(p)//2, 2, figsize=(16, len(p)/2*1.2*1.5), sharex=True)
+        axs = axs.flatten()
+
+        for ax, name in zip(axs, p):
+            self.plot_parameter(ax, *name)
+            ax.set_ylabel("")
+            ax.set_xlabel("")
+            ax.text(0.99, 0.05, " ".join(name), transform=ax.transAxes, ha="right", va="bottom")
+
+        fig.supxlabel("Wavelength (µm)")
+        fig.supylabel("Radiance change from baseline")
+        fig.tight_layout()
+        fig.savefig("plots/sensitivity.png", dpi=300)
+    
+    def savefig(self, name, fig=None, **kwargs):
+        """
+        Save a matplotlib figure to a file in the parent_directory.
+
+        Args:
+            name (str): The name of the file to save the figure as.
+            fig (matplotlib.Figure, optional): The figure to save. If None, the current figure will be saved. Default is None.
+            **kwargs: Additional keyword arguments to pass to `savefig`.
+
+        Returns:
+            None
+        """
+        x = plt if fig is None else fig
+        x.savefig(self.parent_directory / name, bbox_inches="tight", **kwargs)
+
+
 def load_multiple_cores(parent_directory, raise_errors=True):
     """Read in all the cores in a given directory and return a list of NemesisResult objects.
     
@@ -479,6 +582,7 @@ def load_multiple_cores(parent_directory, raise_errors=True):
         try:
             out.append(NemesisResult(core))
         except Exception as e:
+            warnings.warn(f"Failed to load core {core}")
             if raise_errors:
                 raise e
     return out

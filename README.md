@@ -39,6 +39,8 @@ where `parent_directory/` contains a set of cores for a retrieval, `core_N/` is 
 
 ## Core Generation Example (generate.py)
 
+The `eleos.cores` module is designed to be used to generate cores ready for NEMESIS to run.  This code generates a core with NH3 and PH3 profiles and three aerosol layers for a JWST NIRSPEC observation of Jupiter. It uses the built-in .ref files, ktables and other miscellaneous NEMESIS input files (available in `eleos/data/`). Then it generates a submission script for ALICE and submits the job to the scheduler. After the core has successfully run, there will be a selection of summary plots in the `parent/core/plots` directory.
+
 ```python
 from eleos import cores, shapes, profiles
 
@@ -101,15 +103,14 @@ cores.clear_parent_directory(cd)
 core = cores.NemesisCore(cd,
                          planet="jupiter",
                          instrument_ktables="NIRSPEC",
-                         spx_file="nearnadir.spx",
+                         spx_file="example.spx",
                          profiles=[ph3, nh3, deep, main, haze],
                          fmerror_factor=5,
-                         num_iterations=2,
+                         num_iterations=20,
                          scattering=True,
-                         reference_wavelength=4)
-
-# Set some pressure limits - we only have sensitivity between approx 1mbar and 10bar
-core.set_pressure_limits(min_pressure=1e-3, max_pressure=10)
+                         reference_wavelength=4,
+                         min_pressure=1e-3, 
+                         max_pressure=10)
 
 # If there is a specific feature at a given wavelength that we want NEMESIS to always fit, we can use the fix_peak method
 core.fix_peak(central_wavelength=4.07, width=0.05)
@@ -123,6 +124,9 @@ cores.run_alice_job(cd)
 ```
 
 ## Result Analysis Example (analyse.py)
+
+Once NEMESIS has been run on the core, the `eleos.results` module is used to analyse the output. This script takes the output of the previous and generates a set of summary tables containing the prior and retrieved values for each parameter, a plot of the retrieved spectrum, and a plot of the aerosol densities.
+
 
 ```python
 import matplotlib.pyplot as plt
@@ -138,7 +142,7 @@ res.print_summary()
 # Create two plots
 fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(12,5))
 
-# Plot the retrieved spectrum and aerosol optical thickness as a function of pressure 
+# Plot the retrieved spectrum, and aerosol density as a function of pressure 
 res.plot_spectrum(ax=ax1)
 res.plot_aerosol_profiles(ax=ax2)
 
@@ -148,6 +152,47 @@ fig.savefig("example.png", dpi=500)
 ```
 
 
+## Sensitivity Analysis
+
+To determine the effect of each parameter on the spectrum, a sensitivity analysis can be run for a given core. This varies each parameter in each profile by a series of factors (by default 80%, 90%, 95%, 105%, 110%, and 120%) and looks at the relative change in the spectrum compared to not changing anything. To generate the analysis cores we can use the `load_from_previous` function in `eleos.cores` to load the core we want to analyse  and `create_sensitivity_analysis` to generate the forward model cores with the tweaked parameters.
+
+
+```javascript
+from eleos import cores
+
+
+# Define and clear the new parent directory
+cd = "sensitivity/"
+# cores.clear_parent_directory(cd)
+
+# Load the best core from a previous parameter space search
+core = cores.load_from_previous("example/core_1/", cd)
+
+# Create a sensitivity analysis and run it
+cores.create_sensitivity_analysis(core)
+cores.generate_alice_job(cd, python_env_name="pythonmain", username="scat2", hours=2, memory=1)
+cores.run_alice_job(cd)
+```
+
+
+After all the cores have run, we can use the `eleos.results` module again to analyse the results.
+
+
+```python
+from eleos import results
+
+cd = "sensitivity/"
+
+sens = results.SensitivityAnalysis(cd)
+sens.make_parameters_plot()
+sens.savefig("sensitivity.png", dpi=400)
+```
+
+
+or, alternatively, we can run the equivalent script from the command-line using
+
+`python -m eleos --make--sensitivity-summary sensitivity/`
+
 ## Command Line
 
 Eleos can be run at the command line in order to quickly generate summary plots and print a human-readable representation of the.mre file for a core directory using the command
@@ -155,7 +200,6 @@ Eleos can be run at the command line in order to quickly generate summary plots 
 `python -m eleos --make-summary path/to/core/directory`
 
 At the moment, this only works for cores created by Eleos, as it requires the core.pkl file to be present which contains a serialisation of the NemesisCore object used to create the core. This allows very easy access to all the profiles, shapes, attributes etc… In the future, this restriction might be lifted.
-
 
 ## Limitations and future work
 
