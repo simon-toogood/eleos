@@ -39,6 +39,12 @@ where `parent_directory/` contains a set of cores for a retrieval, `core_N/` is 
 
 ## Core Generation Example (generate.py)
 
+
+:::tip
+More examples can be found in the `examples/` directory
+
+:::
+
 The `eleos.cores` module is designed to be used to generate cores ready for NEMESIS to run.  This code generates a core with NH3 and PH3 profiles and three aerosol layers for a JWST NIRSPEC observation of Jupiter. It uses the built-in .ref files, ktables and other miscellaneous NEMESIS input files (available in `eleos/data/`). Then it generates a submission script for ALICE and submits the job to the scheduler. After the core has successfully run, there will be a selection of summary plots in the `parent/core/plots` directory.
 
 ```python
@@ -157,7 +163,7 @@ fig.savefig("example.png", dpi=500)
 To determine the effect of each parameter on the spectrum, a sensitivity analysis can be run for a given core. This varies each parameter in each profile by a series of factors (by default 80%, 90%, 95%, 105%, 110%, and 120%) and looks at the relative change in the spectrum compared to not changing anything. To generate the analysis cores we can use the `load_from_previous` function in `eleos.cores` to load the core we want to analyse  and `create_sensitivity_analysis` to generate the forward model cores with the tweaked parameters.
 
 
-```javascript
+```python
 from eleos import cores
 
 
@@ -165,7 +171,7 @@ from eleos import cores
 cd = "sensitivity/"
 # cores.clear_parent_directory(cd)
 
-# Load the best core from a previous parameter space search
+# Load the previously retrieved core
 core = cores.load_from_previous("example/core_1/", cd)
 
 # Create a sensitivity analysis and run it
@@ -203,4 +209,8 @@ At the moment, this only works for cores created by Eleos, as it requires the co
 
 ## Limitations and future work
 
-Currently, this library only supports Jupiter (although expansion should be fairly easy when providing .ref files), preset k-tables, and is obviously not as flexible generally as using Nemesis directly. In the future, these will be relaxed once the basics of the library have been debugged and tested for both forward and retrieval modes. The advantage of Eleos is the ablilty to create hundreds of consistent cores through a standard interface, without relying on bespoke code to interface with NEMESIS.
+Eleos is not and will never be as flexible as NEMESIS. It is intended to provide a framework for automating the boilerplate code used in generating hundreds of consistent cores through a standard interface, without relying on bespoke code to interface with NEMESIS.
+
+Currently, this library only supports Jupiter (although expansion should be fairly easy when providing .ref files), preset k-tables. In the future, these will be relaxed once the basics of the library have been debugged and tested for both forward and retrieval modes.
+
+A big limitation is the lack of TemperatureProfiles. While these have been partially implemented, for my work in the NIR range we keep the temeprature fixed so adding this is not a priority for me. In the future it will be added though!
