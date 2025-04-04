@@ -726,7 +726,7 @@ class NemesisCore:
         Returns:
             NemeisResult: The results object for the core"""
         
-        self.generate_core(print_progress=True)
+        self.generate_core()
         print("Running NEMESIS...")
         subprocess.run("Nemesis < nemesis.nam > nemesis.prc", 
                        shell=True, 
@@ -736,6 +736,9 @@ class NemesisCore:
         res.make_summary_plot()
         print("Finished!")
         return res
+
+    def change_parent_directory(self, new_directory):
+        raise NotImplementedError("havent got round to this yet")
 
     def generate_prior_distributions(self):
         """Run NEMESIS briefly in a temporary directory to generate the prior gas and aerosol profiles.
@@ -960,7 +963,8 @@ class FixedPeak:
     
 
 def load_core(core_directory):
-    """Load a NemesisCore object saved using NemesisCore._save_core
+    """Load a NemesisCore object saved using NemesisCore._save_core. Do not use this to load a core that has been retrieved;
+    use `results.NemesisResult` for that purpose
     
     Args:
         None
@@ -976,6 +980,7 @@ def load_core(core_directory):
     # Refresh the directory attributes in the NemesisCore object in case the folder has been moved
     core.parent_directory = (core_directory / "..").resolve()
     core.directory = core_directory.resolve()
+
     return core
 
 
@@ -1000,7 +1005,6 @@ def load_from_previous(previous_directory, parent_directory, confirm=True):
 
     core.parent_directory = Path(parent_directory)
     core.directory = core.parent_directory / f"core_{core.id_}"
-    core._create_directory_tree(confirm)
 
     core.num_aerosol_modes = 0
     for label, profile in core.profiles.items():
@@ -1009,22 +1013,30 @@ def load_from_previous(previous_directory, parent_directory, confirm=True):
     return core
 
 
-def create_sensitivity_analysis(template_core, generate_cores=True):
+def create_sensitivity_analysis(template_core, parent_directory, generate_cores=True, factors=(0.80, 0.90, 0.95, 1.05, 1.10, 1.20)):
     """Create a sensitivity analysis by varying the parameters in the template core by a small amount. This is done by
     creating a new core for each parameter in each profile, and varying that parameter by a small amount (default 1%).
     
     Args:
         template_core (NemesisCore): The cre to use as a template
+        parent_directory (str): The parent directory to create the new cores in
         generate_cores (bool): Whether to generate the cores or just return the list of cores to be generated
-        
+        factors (tuple): The factors to vary the parameters by. Default is (0.8, 0.9, 0.95, 1.05, 1.1, 1.2). Note there is no 
+                         need to include 1.00 as a factor as this is equivalent to the baseline which is already calculated
     Returns:
         List[NemesisCore]: A list of new cores with the parameters varied"""
     
     global CORE_ID_COUNTER
+    parent_directory = Path(parent_directory)
+    parent_directory.mkdir(parents=True)
 
     # Create a file that stored which parameters were varied and by how much for each core
-    file = open(f"{template_core.parent_directory}/sensitivity_analysis.txt", "w+")
+    file = open(f"{parent_directory}/sensitivity_analysis.txt", "w+")
     file.write("Core ID,Profile Label,Parameter,Base Value,Shifted Value,Factor\n")
+
+    CORE_ID_COUNTER += 1
+    template_core.parent_directory = parent_directory
+    template_core.directory = parent_directory / f"core_{CORE_ID_COUNTER}"
     cores = [template_core]
 
     # Generate the template core if requested
@@ -1036,7 +1048,7 @@ def create_sensitivity_analysis(template_core, generate_cores=True):
     for label, params in template_core.get_profile_parameter_names().items():
         for param in params:
             # Vary the parameter value by 80% to 120%
-            for factor in [0.80, 0.90, 0.95, 1.05, 1.10, 1.20]:
+            for factor in factors:
 
                 # Copy the core (deep copy to make sure nothing is passed by reference)
                 core = copy.deepcopy(template_core)
@@ -1046,7 +1058,8 @@ def create_sensitivity_analysis(template_core, generate_cores=True):
                 core.id_ = CORE_ID_COUNTER
 
                 # Set to forward mode and change the core directory
-                core.directory = core.parent_directory / f"core_{core.id_}"
+                core.parent_directory = parent_directory
+                core.directory = parent_directory / f"core_{core.id_}"
                 core.forward = True
 
                 # Get and modify the parameter value and log it in the parameter file
@@ -1063,6 +1076,105 @@ def create_sensitivity_analysis(template_core, generate_cores=True):
     file.close()
     
     return cores
+
+
+def create_synthetic_spectra_cores(template_core, parent_directory, generate_cores=True, num_cores=10, variable_factor=1):
+    """Create a retrievability analysis by generating a set of synthetic spectra from template_core with each variable
+     changing by a small random amount. To use this function as a retrievability analysis, run these cores then call
+     `create_retrievability_cores()`.
+    
+    Args:
+        template_core (NemesisCore): The core object to use as a template
+        parent_directory (str): The parent directory to create the new cores in
+        generate_cores (bool): Whether to generate the cores or just return the list of cores to be generated
+        num_cores (int): The number of cores to generate
+        variable_factor (float): The maximum factor by which to scale the variables
+        
+    Returns:
+        List[NemesisCore]: A list of new cores with the parameters varied"""
+    
+    
+    global CORE_ID_COUNTER
+    CORE_ID_COUNTER = 0
+    parent_directory = Path(parent_directory)
+
+    fwd_cores = []
+    for i in range(num_cores):
+        # Copy the core used in the retrieval and set it up
+        newcore = copy.deepcopy(template_core)
+        CORE_ID_COUNTER += 1
+        newcore.id_ = CORE_ID_COUNTER
+        newcore.parent_directory = parent_directory
+        newcore.directory = newcore.parent_directory / f"core_{newcore.id_}"
+        newcore.forward = True
+        
+        # Apply random perturbations to each variable
+        for label, variables in newcore.get_profile_variable_names().items():
+            for var in variables:
+                base_value = getattr(newcore.profiles[label], var)
+                scale = np.random.uniform(-variable_factor, variable_factor)
+                setattr(newcore.profiles[label], var, base_value * (1 + scale))
+
+        # Generate the forward cores
+        if generate_cores:
+            newcore.generate_core(confirm=False)
+       
+        fwd_cores.append(newcore)
+
+    return fwd_cores
+
+
+def create_retrievability_cores(template_core, old_parent_directory, new_parent_directory, generate_cores=True, spectral_noise=0.05):
+    """Once the forward models have run (created by `create_synthetic_spectra_cores()`), extract
+    the model spectra, apply some noise and then set up retrievals to use those spectra.
+    
+    Args:
+        template_core (NemesisCore): The core used to originally create the synthetic spectra
+        old_parent_directory (str): The directory containing the forward-model cores
+        new_parent_directory (str): The directory to place the new retrieved cores in
+        generate_cores (bool):  Whether to generate the cores or not
+        spectral_noise (float): Noise to add to the spectra as a percent of each spectral point
+        
+    Returns:
+        List[NemesisCore]: The list of cores created"""
+    
+    global CORE_ID_COUNTER
+    CORE_ID_COUNTER = 0
+    new_parent_directory = Path(new_parent_directory)
+    old_parent_directory = Path(old_parent_directory)
+
+    ress = results.load_multiple_cores(old_parent_directory)
+
+    specdir = new_parent_directory / "spectra"
+    specdir.mkdir(parents=True)
+
+    new_cores = []
+    for res in ress:
+        # Read in the model spectra and add noise
+        synthetic = res.retrieved_spectrum.model * 1e-6 # conversion from uW... to W...
+        scale = np.random.uniform(-spectral_noise, spectral_noise, synthetic.shape)
+        spxfile = parsers.NemesisSpx(res.core.spx_file)
+        spxfile.spectrum = synthetic * (1 + scale)
+        spxfile.error = spectral_noise / synthetic
+
+        # Create a new core
+        new_core = copy.deepcopy(template_core)
+        CORE_ID_COUNTER += 1
+        new_core.id_ = CORE_ID_COUNTER
+        new_core.parent_directory = new_parent_directory
+        new_core.directory = new_core.parent_directory / f"core_{CORE_ID_COUNTER}"
+        new_core.forward = False
+
+        # Use the synthetic spectrum
+        spxfile.write(specdir / f"synthetic_{new_core.id_}.spx")
+        new_core.spx_file = specdir / f"synthetic_{new_core.id_}.spx"
+
+        if generate_cores:
+            new_core.generate_core(confirm=False)
+
+        new_cores.append(new_core)
+    
+    return new_cores
 
 
 def reset_core_numbering(): 
@@ -1186,7 +1298,7 @@ def generate_alice_job(parent_directory,
         notify = [notify]
     notify_str = ",".join(notify).upper()   
 
-    # Assert that hours and memoryt are ints
+    # Assert that hours and memory are ints
     assert isinstance(hours, int)
     assert isinstance(memory, int) 
 
@@ -1201,10 +1313,12 @@ def generate_alice_job(parent_directory,
         out = out.replace("<PYTHON_ENV>", python_env_name)
         out = out.replace("<NOTIFY>", notify_str)
 
+    if type_ == "sensitivity":
+        out += f"\npython -m eleos {parent_directory.resolve()} --make-sensitivity-summary --run-if-finished"
+
     # Write the filled template 
     with open(script_path, mode="w+") as file:
         file.write(out)
-
 
 
 def run_alice_job(parent_directory, print_queue_delay=2):

@@ -39,11 +39,8 @@ where `parent_directory/` contains a set of cores for a retrieval, `core_N/` is 
 
 ## Core Generation Example (generate.py)
 
+**More examples can be found in the** `examples/` **directory.**
 
-:::tip
-More examples can be found in the `examples/` directory
-
-:::
 
 The `eleos.cores` module is designed to be used to generate cores ready for NEMESIS to run.  This code generates a core with NH3 and PH3 profiles and three aerosol layers for a JWST NIRSPEC observation of Jupiter. It uses the built-in .ref files, ktables and other miscellaneous NEMESIS input files (available in `eleos/data/`). Then it generates a submission script for ALICE and submits the job to the scheduler. After the core has successfully run, there will be a selection of summary plots in the `parent/core/plots` directory.
 
@@ -197,7 +194,7 @@ sens.savefig("sensitivity.png", dpi=400)
 
 or, alternatively, we can run the equivalent script from the command-line using
 
-`python -m eleos --make--sensitivity-summary sensitivity/`
+`python -m eleos --make-sensitivity-summary sensitivity/`
 
 ## Command Line
 

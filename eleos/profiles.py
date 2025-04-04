@@ -103,20 +103,19 @@ class Profile:
         names = self._get_displayable_attributes()
         data = []
 
-        for name_group in names:
+        for base, params in names.items():
             data.append([])
 
             # Add prior (and retrieved) columns
-            for i in range(4 if self.retrieved else 2):
-                try:
-                    data[-1].append(getattr(self, name_group[i]))
-                except:
-                    data[-1].append(" ")
+            for p in params:
+                data[-1].append(getattr(self, p))
+            while len(data[-1]) != (4 if self.retrieved else 2):
+                data[-1].append(" ")
         
             # Add the difference column
             if self.retrieved:
                 try:
-                    pct_diff = 100*(getattr(self, name_group[2]) - getattr(self, name_group[0])) / getattr(self, name_group[0])
+                    pct_diff = 100*(getattr(self, params[2]) - getattr(self, params[0])) / getattr(self, params[0])
                     end = "\x1b[0m"
                     if colors and (abs(pct_diff) > 100):
                         color = "\x1b[41m"
@@ -131,7 +130,7 @@ class Profile:
                 except:
                     data[-1].append(" ")
         
-        table = utils.generate_ascii_table(f"{self.label} {self.shape}", headers, [n[0] for n in names], data)
+        table = utils.generate_ascii_table(f"{self.label} {self.shape}", headers, [n for n in names], data)
         print(table, **kwargs)
         return table
 
@@ -318,7 +317,7 @@ class AerosolProfile(Profile):
             label (str): A label to associate with this Profile. By default it is "Aerosol <aerosol_id>" (eg. "Aerosol 1")       
             shape (Shape): A Shape object that describes the profile shape
             radius (float): Particle radius in microns
-            variance (float): Varaince of the particle size distribution in microns (gamma distribution)
+            variance (float): iance of the particle size distribution in microns (gamma distribution)
             n_lookup (str): If given, use the refractive indicies of this gas (eg. 'CH4')
             real_n (float): If n_lookup is not given, then use this as the real part of the refractive index
             imag_n (float): If n_lookup is not given, then use this as the imaginary part of the refractive index,
@@ -446,7 +445,7 @@ class AerosolProfile(Profile):
         return prof
 
     def _get_displayable_attributes(self):
-        return super()._get_displayable_attributes(extra_vars=["radius", "varaince", "imag_n"])
+        return super()._get_displayable_attributes(extra_vars=["radius", "variance", "imag_n"])
 
     def create_nemesis_string(self):
         """Create the NEMESIS code that represents the aerosol profile (eg. -1 0 32)

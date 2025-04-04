@@ -82,6 +82,7 @@ def read(path: str) -> SpxFileData:
 def write(
     path: str | Path,
     data: SpxFileData | None = None,
+    convert: bool = True,
     **kwargs,
 ) -> None:
     """
@@ -90,8 +91,8 @@ def write(
         spx.write(
             'spectrum.spx',
             wavelengths=wavelengths,
-            spectrum=spectrum,  # In MJy/sr - the unit conversion to W/cm2/sr/um is automatic
-            error=error,        # In MJy/sr - the unit conversion to W/cm2/sr/um is automatic
+            spectrum=spectrum,  # In MJy/sr if convert is False, else W/cm2/sr/um
+            error=error,        # In MJy/sr if convert is False, else W/cm2/sr/um
             fwhm=0,
             lat=20.0,
             lon=30.0,
@@ -108,7 +109,7 @@ def write(
             `None`. These are passed to `construct_spx`.
     """
     if data is None:
-        data = construct_spx(**kwargs)
+        data = construct_spx(convert=convert, **kwargs)
 
     lines: list[str] = []
     ngeom = len(data.geometries)
@@ -121,6 +122,7 @@ def write(
         lines.append(
             f'{g.lat}\t{g.lon}\t{g.phase}\t{g.emission}\t{g.azimuth}\t{g.wgeom}'
         )
+
         for w, s, e in zip(g.wavelengths[mask], g.spectrum[mask], g.error[mask]):
             lines.append(f'{w}\t{s}\t{e}')
     lines.append('')  # end file with a newline
@@ -132,6 +134,7 @@ def construct_spx(
     wavelengths: np.ndarray,
     spectrum: np.ndarray,
     error: np.ndarray,
+    convert: bool = True,
     *,
     fwhm: float,
     lat: float,
@@ -143,8 +146,12 @@ def construct_spx(
     """
     Construct an SpxFileData object from the given data.
 
-    The units should be MJy/sr - the unit conversion is done automatically.
+    The units should be MJy/sr if convert is True, else W/cm2/sr/um.
     """
+
+    spectrum = convert_MJysr_to_Wcm2srum(wavelengths, spectrum) if convert else spectrum
+    error = convert_MJysr_to_Wcm2srum(wavelengths, error) if convert else error
+
     return SpxFileData(
         fwhm=fwhm,
         lat=lat,
@@ -159,11 +166,11 @@ def construct_spx(
                 azimuth=azimuth,
                 wgeom=1,
                 wavelengths=wavelengths,
-                spectrum=convert_MJysr_to_Wcm2srum(wavelengths, spectrum),
-                error=convert_MJysr_to_Wcm2srum(wavelengths, error),
+                spectrum=spectrum,
+                error=error),
             ),
         ),
-    )
+    
 
 
 def convert_MJysr_to_Wcm2srum(

@@ -5,6 +5,10 @@ import itertools as it
 import io
 import numpy as np
 from pathlib import Path
+import astropy.units as u
+
+import warnings
+warnings.formatwarning = lambda msg, *_: f"Warning: {msg}\n"
 
 from . import utils
 from . import constants
@@ -157,7 +161,7 @@ class NemesisItr(Parser):
     """Parser for nemesis.itr. Also requires a NemesisMre parser
     
     Attributes:
-        state_vectors: pd.DataFrame containing the linear state vector for each iteration"""
+        state_vectors (pd.DataFrame): Linear state vectors for each iteration"""
     
     def __init__(self, filepath, mre=None):
         if mre is None:
@@ -211,7 +215,119 @@ class NemesisPrc(Parser):
                     self.chisq.append(utils.get_floats_from_string(line)[0])
 
 
-class NemesisInp(Parser):
+class NemesisSpx(Parser):
+    """Parser for the nemesis.spx file
+
+    Attributes:
+        lat (float):              Latitude of the observation
+        lon (float):              longitude of the observation
+        phase (float):            Phase angle of the observation
+        emission (float):         Emission angle of the observation
+        azimuth (float):          Azimuth angle of the observation
+        wgeom (float):            wgeom
+        nconv (int):              nconv
+        nav (int):                nav
+        fwhm (float):             FWHM of the instrument
+        wavelengths (np.ndarray): Wavelengths of the observed spectra in um
+        spectrum (np.ndarray):    The observed spectra in uW/cm2/sr/um
+        error (np.ndarray):       The error on the observed spectra in uW/cm2/sr/um
+    """
+
+    def read(self):
+        """Read the spx file in
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
+        with open(self.filepath) as f:
+            self.fwhm, *_ = (float(x) for x in f.readline().split())
+            self.nconv = int(float(f.readline()))
+            self.nav = int(float(f.readline()))
+            self.lat, self.lon, self.phase, self.emission, self.azimuth, self.wgeom = (
+                float(x) for x in f.readline().split()
+            )
+            self.wavelengths = np.full(self.nconv, np.nan)
+            self.spectrum = np.full(self.nconv, np.nan)
+            self.error = np.full(self.nconv, np.nan)
+            for i in range(self.nconv):
+                w, s, e = (float(x) for x in f.readline().split())
+                self.wavelengths[i] = w
+                self.spectrum[i] = s
+                self.error[i] = e
+
+    def write(self, filepath):
+        """
+        Write an SPX file to disk
+
+        Args:
+            filepath (str): The filepath of the new .spx file
+
+        Returns:
+            None
+        """
+
+        lines = []
+        lines.append(f'{self.fwhm}\t{self.lat}\t{self.lon}\t1')
+        mask = ~(np.isnan(self.spectrum) | np.isnan(self.error))
+        nconv = len(self.wavelengths[mask])
+        lines.append(f'{nconv}')
+        lines.append(f'{self.nav}')
+        lines.append(f'{self.lat}\t{self.lon}\t{self.phase}\t{self.emission}\t{self.azimuth}\t{self.wgeom}')
+
+        if np.max(self.spectrum) > 1e-4:
+            warnings.warn(f"This spectrum looks extremely bright (max value {np.max(self.spectrum)}) - have you converted from MJy/sr to W/cm2/sr/um?")
+
+        for w, s, e in zip(self.wavelengths[mask], self.spectrum[mask], self.error[mask]):
+            lines.append(f'{w: 12f}  {s: 12e}  {e: 12e}')
+        lines.append('')  # end file with a newline
+
+        with open(filepath, 'w') as f:
+            f.write('\n'.join(lines))
+
+    @staticmethod
+    def convert_MJysr_to_Wcm2srum(
+        wavelengths: np.ndarray,
+        spectrum: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Convert a spectrum or cube from MJy/sr to W/cm2/sr/micron.
+        """
+        while len(wavelengths.shape) < len(spectrum.shape):
+            # work for cubes passed to sp
+            wavelengths = np.expand_dims(wavelengths, -1)
+
+        spx_MJysr = spectrum * u.MJy / u.sr
+        spx_Wcm2srum = spx_MJysr.to(
+            u.W / (u.cm * u.cm) / u.sr / u.micron,
+            equivalencies=u.spectral_density(wavelengths * u.micron),
+        )
+
+        return spx_Wcm2srum.value
+
+    @staticmethod
+    def convert_Wcm2srum_to_MJysr(
+        wavelengths: np.ndarray,
+        spectrum: np.ndarray,
+    ) -> np.ndarray:
+        """
+        Convert a spectrum or cube from W/cm2/sr/micron to MJy/sr.
+        """
+        while len(wavelengths.shape) < len(spectrum.shape):
+            # work for cubes passed to sp
+            wavelengths = np.expand_dims(wavelengths, -1)
+
+        spx_Wcm2srum = spectrum * u.W / (u.cm * u.cm) / u.sr / u.micron
+        spx_MJysr = spx_Wcm2srum.to(
+            u.MJy / u.sr,
+            equivalencies=u.spectral_density(wavelengths * u.micron),
+        )
+        return spx_MJysr.value
+
+
+class NemesisInp(Parser):   
     """Parser for nemesis.inp
     
     Attributes:

@@ -165,7 +165,7 @@ class NemesisResult:
         if self.core.forward:
             ax.scatter(0, self.chi_sq)
         else:
-            ax.plot(self.get_chi_sq(all_iterations=True))
+            ax.plot(self.chi_sqs)
         ax.axhline(y=1, ls="dashed")
         ax.set_xlabel("Iteration Number")
         ax.set_ylabel("$\chi^2$")
@@ -471,14 +471,14 @@ class SensitivityAnalysis:
     Attributes:
         parent_directory (str): The directory containing the sensitivity cores
         results (list[NemesisResult]): A list of NemesisResult objects for each core
-        baseline (NemesisResult): The baseline core, an alias for results[0]
+        baseline (NemesisResult): The baseline result, an alias for results[0]
         params (pandas.DataFrame): A DataFrame  detailing which parameters were varied in each core and their value
     """
 
     def __init__(self, parent_directory):
         self.parent_directory = Path(parent_directory)
         self.results = load_multiple_cores(parent_directory)
-        self.baseline = self.cores[0]
+        self.baseline = self.results[0]
         self.params = pd.read_csv(self.parent_directory / "sensitivity_analysis.txt")
     
     def _get_all_params(self):
