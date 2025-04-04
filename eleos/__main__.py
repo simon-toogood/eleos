@@ -19,8 +19,8 @@ all the cores in the parent_directory specified This is done by checking
 for the existance of "Done!" in the slurm output for each core.
 
 General command format:
-python -m eleos [DIRECTORY] [COMMAND] [RUN IF FINISHED] 
-argv:  0             1          2            3
+       python -m eleos [DIRECTORY] [COMMAND] [RUN IF FINISHED] 
+argv:          0             1          2            3
 
 """
 
@@ -42,7 +42,7 @@ if sys.argv[-1] == "--run-if-finished":
         except IndexError:
             exit_msg()
     
-    # If we haven't exited yet, all cores must have run
+    # If we haven't exited yet, all cores must have run.
     # There could be some weird race condition here when multiple cores finish at exactly the
     # but I'm choosing to ignore that and hope it's not a problem
     print(f"All cores have run! Running command...")

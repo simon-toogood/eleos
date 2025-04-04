@@ -19,4 +19,4 @@ inputdir=<CORE_DIR>/core_${SLURM_ARRAY_TASK_ID}
 cd $inputdir
 Nemesis < nemesis.nam > nemesis.prc
 
-python -m eleos --make-summary $inputdir
+python -m eleos $inputdir --make-summary
