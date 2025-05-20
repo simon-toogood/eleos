@@ -5,6 +5,7 @@ import sys
 import signal
 import os
 import shutil
+import re
 import copy
 import subprocess
 from collections import defaultdict
@@ -108,12 +109,17 @@ class NemesisCore:
         self._forward = forward
         self.num_iterations = num_iterations
         self.num_layers = num_layers
-        self.instrument_ktables = instrument_ktables
         self.fmerror_factor = fmerror_factor
         self.fmerror_pct = fmerror_pct
         self.fmerror_value = fmerror_value
         self.cloud_cover = cloud_cover
         self.reference_wavelength = reference_wavelength
+
+        # Set up instrument ktables
+        if instrument_ktables.lower() not in ["nirspec", "miri"]:
+            raise ValueError(f"instrument_ktables must be either 'NIRSPEC' or 'MIRI', not {instrument_ktables}")
+        self.instrument_ktables = instrument_ktables
+        self.ktable_path = constants.PATH / f"data/jupiter/{self.instrument_ktables.lower()}.kls"
 
         # Set the directories of the parent folder and own core
         self.parent_directory = Path(parent_directory).resolve()
@@ -155,6 +161,7 @@ class NemesisCore:
 
         # Add a list to hold any FixedPeak classes the user wants
         self.fixed_peaks = []
+        self.excluded_gases = []
 
         # Add a reference to self in each Profile and set up AerosolProfiles correctly
         self.profiles = dict()
@@ -363,7 +370,7 @@ class NemesisCore:
         Creates:
             aerosol.ref"""
         
-        # If there are no clouds defined return immediately
+        # If there are no clouds defined return immediately - THIS IS BROKEN, AEROISOL.REF NEEDS TO EXIST
         if self.num_aerosol_modes == 0:
             return
         
@@ -391,10 +398,14 @@ class NemesisCore:
         TODO:
             Add way to include/exclude different elements
             Add option to use ktables on ALICE rather than prepackaged"""
-        if self.instrument_ktables == "NIRSPEC":
-            shutil.copy(constants.PATH / "data/jupiter/nirspec.kls", self.directory / "nemesis.kls")
-        elif self.instrument_ktables == "MIRI":
-            shutil.copy(constants.PATH / "data/jupiter/miri.kls", self.directory / "nemesis.kls")
+
+        mask = [name in self.excluded_gases for name in self.get_ktable_gas_names()]
+
+        with open(self.ktable_path, mode="r") as tmp:
+            with open(self.directory / "nemesis.kls", mode="w+") as file:
+                for i, line in enumerate(tmp):
+                    if not mask[i]:
+                        file.write(line)
 
     def _generate_fmerror(self):
         """For each wavelength in the spx file, adjust the error by a factor (either fmerror_factor, _pct or _value) and write to the fmerror file. 
@@ -598,6 +609,8 @@ class NemesisCore:
             file.write(out)
 
         with open(self.directory / "aerosol_names.txt", mode="w+") as file:
+            if self.num_aerosol_modes == 0:
+                return
             for name, profile in self.profiles.items():
                 if isinstance(profile, profiles_.AerosolProfile):
                     file.write(name + "\n")
@@ -759,7 +772,7 @@ class NemesisCore:
             if fp.is_file():
                 fp.unlink()
 
-        # Copy any extra files from the mian directory
+        # Copy any extra files from the main directory
         for filename in old_dir.glob("*"):
             if filename.is_file():
                 shutil.copy(filename, self.directory)
@@ -851,6 +864,21 @@ class NemesisCore:
             None
         """
         self.fixed_peaks.append(FixedPeak(central_wavelength, width, error))
+
+    def exclude_gases(self, *gases):
+        """Exclude the given gases by removing the k-tables. This assumes the k-table filepaths are of the form
+        **/<gas_name>.combi.kta. Use get_ktable_gas_names() to get a list of all the gases available."""
+        self.excluded_gases = gases
+
+    def get_ktable_gas_names(self):
+        with open(self.ktable_path) as file:
+            lines = file.readlines()
+            gas_names = []
+            for line in lines:
+                match = re.search(r'([^/]+)(?=\.combi\.kta)', line)
+                if match:
+                    gas_names.append(match.group(1))
+        return gas_names
 
     def get_height_limits(self):
         """Get the heights of the top and bottom layers of the atmosphere in km.
@@ -1175,6 +1203,52 @@ def create_retrievability_cores(template_core, old_parent_directory, new_parent_
         new_cores.append(new_core)
     
     return new_cores
+
+
+def create_gas_analysis_cores(template_core, parent_directory, generate_cores=True, new_spx=None):
+    """Create a set of cores where each core has a single gas excluded. USeful for determining where in 
+    the spectrum each gas contributes.
+    
+    Args:
+        template_core (NemesisCore): The core to use as a template
+        parent_directory (str): The parent directory to create the new cores in
+        generate_cores (bool): Whether to generate the cores or just return the list of cores to be generated
+        new_spx (str): The path to a new spx file to use instead of the one in the template core. This is useful if you want to use a different resolution or wavelength range
+
+    Returns:
+        List[NemesisCore]: A list of new cores with the gases excluded"""
+    
+    def make_core(template_core, parent_directory, new_spx):
+        global CORE_ID_COUNTER
+        core = copy.deepcopy(template_core)
+        CORE_ID_COUNTER += 1
+        core.id_ = CORE_ID_COUNTER
+
+        core.parent_directory = Path(parent_directory)
+        core.directory = core.parent_directory / f"core_{core.id_}"
+        core.forward = True
+
+        if new_spx is not None:
+            core.spx_file = Path(new_spx)
+
+        return core
+
+    clear_parent_directory(parent_directory)
+    reset_core_numbering()
+
+    all_cores = [make_core(template_core, parent_directory, new_spx)]
+
+    names = template_core.get_ktable_gas_names()
+    for name in names:
+        core = make_core(template_core, parent_directory, new_spx)
+        core.exclude_gases(name)
+        all_cores.append(core)
+    
+    if generate_cores:
+        for core in all_cores:
+            core.generate_core()
+        
+    return all_cores
 
 
 def reset_core_numbering(): 

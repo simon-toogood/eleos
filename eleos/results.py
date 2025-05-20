@@ -534,17 +534,17 @@ class SensitivityAnalysis:
             ax.plot(r.retrieved_spectrum.wavelength, 
                     r.retrieved_spectrum.model / base, 
                     alpha=alpha_map(factor, 1-df["Factor"].min(), 0.25), 
-                    color="r" if factor > 1 else "b",
+                    color="#F92929" if factor > 1 else "#0091FF",
                     label=factor)
             
         ax.set_ylabel(f"Change from baseline")
         ax.set_xlabel("Wavelength (µm)")
         ax.yaxis.set_major_formatter(mpl.ticker.PercentFormatter(1.0))
-        ax.axhline(1, c="k", ls="dashed")
+        ax.axhline(1, c="white", ls="dashed")
 
     def make_parameters_plot(self):
         p = self._get_all_params()
-        fig, axs = plt.subplots(len(p)//2, 2, figsize=(16, len(p)/2*1.2*1.5), sharex=True)
+        fig, axs = plt.subplots(len(p)//3, 3, figsize=(16, len(p)/3*1.2*1.5), sharex=True)
         axs = axs.flatten()
 
         for ax, name in zip(axs, p):

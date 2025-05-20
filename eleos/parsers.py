@@ -6,6 +6,7 @@ import io
 import numpy as np
 from pathlib import Path
 import astropy.units as u
+import struct
 
 import warnings
 warnings.formatwarning = lambda msg, *_: f"Warning: {msg}\n"
@@ -287,6 +288,32 @@ class NemesisSpx(Parser):
         with open(filepath, 'w') as f:
             f.write('\n'.join(lines))
 
+    @classmethod
+    def from_lists(cls,
+                   wavelengths, 
+                   spectrum, 
+                   error, 
+                   lat, lon, phase, emission, azimuth, fwhm=0,
+                   convert=True):
+        spx = cls.__new__(cls)
+        if convert:
+            spx.spectrum = NemesisSpx.convert_MJysr_to_Wcm2srum(wavelengths, spectrum)
+            spx.error = NemesisSpx.convert_MJysr_to_Wcm2srum(wavelengths, error)
+        else:
+            spx.spectrum = np.array(spectrum)
+            spx.error = np.array(error)
+        spx.wavelengths = np.array(wavelengths)
+        spx.lat = lat
+        spx.lon = lon
+        spx.phase = phase
+        spx.emission = emission
+        spx.azimuth = azimuth
+        spx.fwhm = fwhm
+        spx.nconv = len(spx.wavelengths)
+        spx.nav = 1
+        spx.wgeom = 1
+        return spx
+
     @staticmethod
     def convert_MJysr_to_Wcm2srum(
         wavelengths: np.ndarray,
@@ -415,4 +442,80 @@ class AerosolPrf(Parser):
         with open(Path(self.filepath).parent / "aerosol_names.txt") as file:
             names = file.read().split("\n")
             self.data.columns = ["height"] + names
+
+
+class kTable(Parser):
+    """Parser for ktables
+    
+    Atributes:
+        ktable (np.ndarray):      4D array of absorption coefficients with axes (wavelength, pressure, temperature, g-ordinate).
+        wavelength (np.ndarray):  Array of spectral points
+        pressure (np.ndarray):    Array of pressure levels
+        temperature (np.ndarray): Array of temperature levels
+        g_ordinates (np.ndarray): Array of g-ordinates used in correlated-k integration
+        g_weights (np.ndarray):   Corresponding quadrature weights for g-ordinates
+        irec0 (int):              Number of header records
+        npoint (int):             Number of spectral points
+        vmin (float):             Starting value of the spectral axis
+        delv (float):             Spectral spacing. If negative, grid is non-uniform and read from file.
+        fwhm (float):             Full Width at Half Maximum for spectral bins
+        np_ (int):                Number of pressure levels
+        nt (int):                 Number of temperature levels
+        ng (int):                 Number of g-ordinates
+        idgas (int):              Identifier for the gas species 
+        isogas (int):             Identifier for the isotope of the gas
+    """
+    
+    @staticmethod
+    def read_float(file):
+        return struct.unpack('f', file.read(4))[0]
+
+    @staticmethod
+    def read_long(file):
+        return struct.unpack('i', file.read(4))[0]
+
+    def read(self):
+        with open(self.filepath, 'rb') as f:
+
+            # Read header
+            self.irec0  = self.read_long(f)
+            self.npoint = self.read_long(f)
+            self.vmin   = self.read_float(f)
+            self.delv   = self.read_float(f)
+            self.fwhm   = self.read_float(f)
+            self.np_    = self.read_long(f)
+            self.nt     = self.read_long(f)
+            self.ng     = self.read_long(f)
+            self.idgas  = self.read_long(f)
+            self.isogas = self.read_long(f)
+
+            # Read g ordinates and weights
+            self.g_ordinates = np.array([self.read_float(f) for _ in range(self.ng)])
+            self.g_weights = np.array([self.read_float(f) for _ in range(self.ng)])
+
+            # Skip two records
+            _ = self.read_float(f)
+            _ = self.read_float(f)
+
+            # Construct pressure/temperature grid
+            self.pressure = np.array([self.read_float(f) for _ in range(self.np_)])
+            self.temperature = np.array([self.read_float(f) for _ in range(self.nt)])
+
+            # Read in wavelengths
+            nrec = 10 + 2 * self.ng + 2 + self.np_ + self.nt
+            if self.delv < 0.0:
+                self.wavelength = np.array([self.read_float(f) for _ in range(self.npoint)])
+                nrec += self.npoint
+            else:
+                self.wavelength = self.vmin + self.delv * np.arange(self.npoint)
+
+            # Skip records to reach k-table data
+            jrec = self.irec0 - nrec - 1
+            for _ in range(jrec):
+                _ = self.read_float(f)
+
+            # Read k-table
+            total_values = self.npoint * self.np_ * self.nt * self.ng
+            ktable_flat = np.frombuffer(f.read(total_values * 4), dtype=np.float32)
+            self.ktable = ktable_flat.reshape((self.npoint, self.np_, self.nt, self.ng))
 

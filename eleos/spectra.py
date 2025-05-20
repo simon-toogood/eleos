@@ -1,13 +1,17 @@
 import numpy as np
 import pandas as pd
 import glob
+import h3ppy
 import planetmapper
+import scipy
+import copy
 from astropy.io import fits
 from collections import defaultdict
 
 from . import utils
 from . import spx
 from . import constants
+from . import ch4
 
 
 def trim_spectra(spectra, wavelengths, min_wl=-float("inf"), max_wl=float("inf")):
@@ -119,6 +123,87 @@ def get_nonlte_emission_mask(wavelengths,
     return h3p_mask, ch4_mask
 
 
+def subtract_h3p(spectrum, neutral_model, wavelengths, region=(3.5, 3.6), return_model=False):
+    """Subtract H3+ emission form a spectrum, using a neutral model as the background
+    
+    Args:  
+        spectrum (np.ndarray):       Measured spectrum in units of uW/cm2/sr/um
+        neutral_model (np.ndarray):  NEMESIS-fitted neutral atmosphere model in units of uW/cm2/sr/um
+        wavelengths (np.ndarray):    Wavelength grid
+        region (float, float):       The region to use to fit the H3+ model (by default this is a triple of bright lines)
+        return_model:                If True, then return the h3p object used for the fit
+    
+    Returns:
+        np.ndarray: Spectrum with H3+ subtracted in units of uW/cm2/sr/um
+        h3ppy.h3p:  If return_model, the h3p object that was used to fit
+    """
+    spectrum = copy.deepcopy(spectrum) * 0.01
+    neutral_model = copy.deepcopy(neutral_model) * 0.01
+    h3p_mask = (wavelengths > region[0]) & (wavelengths < region[1])
+    h3p_wls = wavelengths[h3p_mask]
+
+    h3p = h3ppy.h3p()
+    h3p.set(R=2700, wave=h3p_wls, data=spectrum[h3p_mask] - neutral_model[h3p_mask])
+    h3p.guess_density()
+    fit = h3p.fit()
+    vars, errs = h3p.get_results()
+    h3p.set(**vars, wave=wavelengths)
+    h3p_pred = h3p.model()
+    
+    subtracted = spectrum - h3p_pred
+
+    if return_model:
+        return subtracted * 100, h3p
+    else:
+        return subtracted * 100
+
+
+def subtract_ch4(spectrum, neutral_model, wavelengths, region=(3.25, 3.4), include_linear=True, return_model=False):
+    """Subtract CH4 non-LTE emission form a spectrum, using a neutral model as the background.
+    It is highly recommended to subtract H3+ emission first using subtract_h3p()
+    
+    Args:  
+        spectrum (np.ndarray):       Measured spectrum in units of uW/cm2/sr/um
+        neutral_model (np.ndarray):  NEMESIS-fitted neutral atmosphere model in units of uW/cm2/sr/um
+        wavelengths (np.ndarray):    Wavelength grid
+        region (float, float):       The region to use to fit the H3+ model (by default this is a triple of bright lines)
+        include_linear (bool):       Whether to include the linear offset in the fit or not (fits better, but is it physical?)
+        return_model:                If True, then return the parameters and covaraince matrix for the fit
+    
+    Returns:
+        np.ndarray: Spectrum with CH4 subtracted units uW/cm2/sr/um
+        np.ndarray: Only if return_model, the optimised parameters
+        np.ndarray: Only if return_model, the covariance matrix
+        function:   Only if return_model, the CH4 fit function
+    """
+
+    ch4_mask = (wavelengths > 3.25) & (wavelengths < 3.4)
+    ch4_wls = wavelengths[ch4_mask]
+    ch4_data = spectrum - neutral_model
+    ch4_data[~ch4_mask] = 0
+    ch4lines = ch4.fit_non_LTE_CH4_JWST(wavelengths)
+
+    if include_linear:
+        def ch4_model(_, fun_scale, hot_scale, m, c):
+            lines = ch4lines.ch4_fun*fun_scale + ch4lines.ch4_hot*hot_scale
+            x = np.arange(0, len(ch4lines.ch4_fun), 1)
+            linear = x*m + c
+            return lines * linear
+    else:
+        def ch4_model(_, fun_scale, hot_scale):
+            lines = ch4lines.ch4_fun*fun_scale + ch4lines.ch4_hot*hot_scale
+            return lines
+        
+    popt, pcov = scipy.optimize.curve_fit(ch4_model, ch4_wls, ch4_data)
+    ch4_pred = ch4_model(None, *popt)
+    subtracted = spectrum - ch4_pred
+
+    if return_model:
+        return subtracted, popt, pcov, ch4_model
+    else:
+        return subtracted
+
+
 def multiple_cube_average(cubes):
     return np.nanmean(np.array(cubes), axis=(0,2,3))
 
@@ -173,7 +258,7 @@ def get_single_spectra(file_pattern,
            file_pattern (str):   File pattern to match observation files.
            out_filename (str):   Output filename template for saving the processed spectrum (if None then don't save). 
                                  This can contain any of the parameters passed into the function surrounded 
-                                 by curly braces. eg. spectra_n{num_points}.spx will become spectra_n80.spx 
+                                 by curly braces. eg. "spectra_n{num_points}.spx" will become "spectra_n80.spx" 
                                  if num_points=80 is passed in.
            max_emission (float): Maximum allowable emission angle.
            margins (int):        Number of pixels around the edge of the image to remove.

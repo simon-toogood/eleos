@@ -29,6 +29,18 @@ def nanaverage(data, weights, axis=None):
     return np.ma.average(ma, weights=weights)
 
 
+# Matplotlib extension functions
+
+def label_axes(axs, labels="abcdefghijklmnopqrstuvwxyz", append=")", loc=(0.01,0.01), **kwargs):
+    if isinstance(axs, dict):
+        ax = np.array(list(axs.values()))
+        labels = list(axs.keys())
+        axs = ax
+    labeliter = iter(labels)
+    for ax in axs.flatten():
+        ax.text(loc[0], loc[1], next(labeliter) + append, transform=ax.transAxes, **kwargs)
+
+
 # String / file operation functions
 
 def read_between_lines(file, start, end):
