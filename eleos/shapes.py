@@ -105,9 +105,9 @@ class Shape0(Shape):
 @shapeclass
 class Shape1(Shape):
     """Profile is to be represented as a deep VMR up to a certain ‘knee’ pressure, and
-then a defined fractional scale height. The next line of the .apr file then contains
-the ‘knee’ pressure, followed by the a priori deep and fractional scale height
-values together with their estimated errors. """
+    then a defined fractional scale height. The next line of the .apr file then contains
+    the ‘knee’ pressure, followed by the a priori deep and fractional scale height
+    values together with their estimated errors. """
     ID: ClassVar[int] = 1
     CONSTANTS: ClassVar[list[str]] = ["knee_pressure"]
     VARIABLES: ClassVar[list[str]] = ["deep_vmr", "fsh"]
@@ -123,9 +123,9 @@ values together with their estimated errors. """
 @shapeclass
 class Shape2(Shape):
     """Profile is to be represented by a simple scaling of the corresponding profile
-runname.ref (for T, v.m.r.), aerosol.ref (for aerosol density), parah2.ref (for
-para-H2 fraction) or fcloud.ref (for fractional cloud cover). The next line of the
-.apr file then contains the a priori factor and error."""
+    runname.ref (for T, v.m.r.), aerosol.ref (for aerosol density), parah2.ref (for
+    para-H2 fraction) or fcloud.ref (for fractional cloud cover). The next line of the
+    .apr file then contains the a priori factor and error."""
     ID: ClassVar[int] = 2
     CONSTANTS: ClassVar[list[str]] = []
     VARIABLES: ClassVar[list[str]] = ["scale_factor"]
@@ -138,9 +138,9 @@ para-H2 fraction) or fcloud.ref (for fractional cloud cover). The next line of t
 @shapeclass
 class Shape4(Shape):
     """Very similar to Shape1 in that the profile is to be
-represented as a deep value up to a certain 'knee' pressure, and then a defined
-fractional scale height. However, in this case the knee pressure is also a variable
-parameter and thus must be supplied with an error estimate."""
+    represented as a deep value up to a certain 'knee' pressure, and then a defined
+    fractional scale height. However, in this case the knee pressure is also a variable
+    parameter and thus must be supplied with an error estimate."""
     ID: ClassVar[int] = 4
     CONSTANTS: ClassVar[list[str]] = []
     VARIABLES: ClassVar[list[str]] = ["deep_vmr", "fsh", "knee_pressure"]
@@ -157,11 +157,11 @@ parameter and thus must be supplied with an error estimate."""
 @shapeclass
 class Shape20(Shape):
     """Very similar to case 1 in that profile is to be represented as a deep value up to a
-certain ‘knee’ pressure, and then a defined fractional scale height. However, in
-this parameterisation, the profile is forced to a very small number at pressures less
-than a ‘tropopause’ temperature. The next line of the .apr file then contains the
-‘knee’ and ‘tropopause’ pressures, followed by the a priori deep and fractional
-scale height values together with their estimated errors.e."""
+    certain ‘knee’ pressure, and then a defined fractional scale height. However, in
+    this parameterisation, the profile is forced to a very small number at pressures less
+    than a ‘tropopause’ temperature. The next line of the .apr file then contains the
+    ‘knee’ and ‘tropopause’ pressures, followed by the a priori deep and fractional
+    scale height values together with their estimated errors.e."""
     ID: ClassVar[int] = 20
     CONSTANTS: ClassVar[list[str]] = ["knee_pressure", "tropopause_pressure"]
     VARIABLES: ClassVar[list[str]] = ["deep_vmr", "fsh"]
@@ -178,14 +178,14 @@ scale height values together with their estimated errors.e."""
 @shapeclass
 class Shape32(Shape):
     """Similar to model 8 in that profile is a cloud profile represented by a variable
-base pressure, specific density at the level and fractional scale height. The next
-line of the .apr file then contains the a priori base pressure, followed by the a
-priori opacity and fractional scale height values together with their estimated
-errors. All quantities are taken as logs so negative fractional scale heights are
-not allowed. Difference from Model 8 is that cloud density at pressures greater
-than the base pressure is set to drop exponentially with increasing pressure with
-a scale height of 1km, rather than just being set to zero. This makes it easier for
-NEMESIS to actually find an optimal value of the knee pressure."""
+    base pressure, specific density at the level and fractional scale height. The next
+    line of the .apr file then contains the a priori base pressure, followed by the a
+    priori opacity and fractional scale height values together with their estimated
+    errors. All quantities are taken as logs so negative fractional scale heights are
+    not allowed. Difference from Model 8 is that cloud density at pressures greater
+    than the base pressure is set to drop exponentially with increasing pressure with
+    a scale height of 1km, rather than just being set to zero. This makes it easier for
+    NEMESIS to actually find an optimal value of the knee pressure."""
     ID:  ClassVar[int] = 32
     CONSTANTS: ClassVar[list[str]] = []
     VARIABLES: ClassVar[list[str]] = ["opacity", "fsh", "base_pressure"]
@@ -202,8 +202,8 @@ NEMESIS to actually find an optimal value of the knee pressure."""
 @shapeclass
 class Shape37(Shape):
     """Cloud which has constant opacity/bar between two specified pressure levels
-(measured in bar). The next line of the .apr file then contains the two pressures
-(in bar) in the order high - low, followed by the a priori opacity/bar and error"""
+    (measured in bar). The next line of the .apr file then contains the two pressures
+    (in bar) in the order high - low, followed by the a priori opacity/bar and error"""
     ID: ClassVar[int] = 37
     CONSTANTS: ClassVar[list[str]] = ["bottom_pressure", "top_pressure"]
     VARIABLES: ClassVar[list[str]] = ["opacity"]
@@ -218,10 +218,10 @@ class Shape37(Shape):
 @shapeclass
 class Shape47(Shape):
     """As model 14, but for a cloud centred at a specified pressure (rather than altitude),
-variable FWHM (log pressure units) and defined total opacity. The next line of
-the .apr file then contains the a priori opacity, the a priori pressure where the
-distribution peaks, and the a priori width (in units of log pressure), with their
-respective errors."""
+    variable FWHM (log pressure units) and defined total opacity. The next line of
+    the .apr file then contains the a priori opacity, the a priori pressure where the
+    distribution peaks, and the a priori width (in units of log pressure), with their
+    respective errors."""
     ID: ClassVar[int] = 47
     CONSTANTS: ClassVar[list[str]] = []
     VARIABLES: ClassVar[list[str]] = ["opacity", "central_pressure", "pressure_width"]
@@ -238,10 +238,10 @@ respective errors."""
 @shapeclass
 class Shape48(Shape):
     """As model 32, in that profile is a cloud profile represented by a variable base
-pressure, specific density at the level, fractional scale height, but also a variable
-top pressure. The next line of the .apr file then contains the a priori base
-pressure, followed by the a priori top pressure, opacity and fractional scale
-height values together with their estimated errors."""
+    pressure, specific density at the level, fractional scale height, but also a variable
+    top pressure. The next line of the .apr file then contains the a priori base
+    pressure, followed by the a priori top pressure, opacity and fractional scale
+    height values together with their estimated errors."""
     ID:  ClassVar[int] = 48
     CONSTANTS: ClassVar[list[str]] = []
     VARIABLES: ClassVar[list[str]] = ["opacity", "fsh", "base_pressure", "top_pressure"]

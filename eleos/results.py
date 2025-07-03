@@ -126,18 +126,23 @@ class NemesisResult:
         else:
             # Pattern to match to find values in the .prc file
             if self.core.forward:
-                pattern = "chisq/ny is equal to :    "
+                pattern = "chisq/ny is equal to :"
             else:
-                pattern = "chisq/ny =    "
-
+                pattern = "chisq/ny = "
+            
             # Parse the .prc file
             with open(self.core_directory / "nemesis.prc") as file:
                 lines = [line for line in file if pattern in line]
-                values = [float(re.findall(r"[-+]?\d*\.\d+|\d+", line)[0]) for line in lines]  # Extract all floats
-            
+                try:
+                    values = [float(re.findall(r"[-+]?\d*\.\d+|\d+", line)[0]) for line in lines]  # Extract all floats
+                except IndexError:
+                    values = np.array([np.nan for _ in lines])
             # Write results to .chi file
             with open(self.core_directory / "nemesis.chi", "w+") as file:
                 file.write("\n".join(map(str, values)))
+
+            if len(values) == 0:
+                values = [np.nan]
 
             return values
 
@@ -171,30 +176,34 @@ class NemesisResult:
         ax.set_ylabel("$\chi^2$")
 
     @plotting
-    def plot_spectrum(self, ax):
+    def plot_spectrum(self, ax, show_chisq=True, legend=True):
         """Plot the measured and model spectrum on a matplotlib Axes.
         
         Args:
             ax: The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes
-            
+            show_chisq (bool): Whether to display the chi-squared value of the fit
+            legend (bool): Whether to draw the legend
+
         Returns:
             matplotlib.Figure: The Figure object to which the Axes belong
             matplotlib.Axes: The Axes object onto which the data was plotted"""
     
         ax.set_yscale("log")
-        ax.plot(self.retrieved_spectrum.wavelength, self.retrieved_spectrum.measured, lw=0.5, label="Measured")
+        ax.plot(self.retrieved_spectrum.wavelength, self.retrieved_spectrum.measured, lw=0.5, label="Measured" if legend else None)
         ax.fill_between(self.retrieved_spectrum.wavelength, self.retrieved_spectrum.measured-self.retrieved_spectrum.error, self.retrieved_spectrum.measured+self.retrieved_spectrum.error, alpha=0.5)
 
-        ax.plot(self.retrieved_spectrum.wavelength, self.retrieved_spectrum.model, c="r", lw=0.5, label="Model")
+        ax.plot(self.retrieved_spectrum.wavelength, self.retrieved_spectrum.model, c="r", lw=0.5, label="Model" if legend else None)
 
-        plt.text(0.95, 0.05, f"$\chi^2 = ${self.chi_sq:.3f}",
-            horizontalalignment='right',
-            verticalalignment='bottom',
-            transform = ax.transAxes)
+        if show_chisq:
+            plt.text(0.95, 0.05, f"$\chi^2 = ${self.chi_sq:.3f}",
+                horizontalalignment='right',
+                verticalalignment='bottom',
+                transform = ax.transAxes)
 
         ax.set_xlabel("Wavelength (μm)")
         ax.set_ylabel("Radiance\n(μW cm$^{-2}$ sr$^{-1}$ μm$^{-1}$)")
-        ax.legend()
+        if legend:
+            ax.legend()
 
     @plotting
     def plot_spectrum_residuals(self, ax):
@@ -259,6 +268,10 @@ class NemesisResult:
         
         # Iterate over every retrieved aerosol
         max_value = -1
+
+        if self.core.num_aerosol_modes == 0:
+            return
+        
         for label in self.retrieved_aerosols.columns:
             if label in ("height", "pressure"):
                 continue
@@ -531,30 +544,40 @@ class SensitivityAnalysis:
         base = self.baseline.retrieved_spectrum.model
 
         for factor, r in zip(df["Factor"], ress):
+            y = r.retrieved_spectrum.model / base
             ax.plot(r.retrieved_spectrum.wavelength, 
-                    r.retrieved_spectrum.model / base, 
+                    y, 
                     alpha=alpha_map(factor, 1-df["Factor"].min(), 0.25), 
-                    color="#F92929" if factor > 1 else "#0091FF",
+                    color="#FF0000" if factor > 1 else "#0044FF",
                     label=factor)
             
+        
+        low, high = ax.get_ylim()
+        bound = np.max((np.abs(low-1), np.abs(high-1)))
+        ax.set_ylim(-bound+1, bound+1)
         ax.set_ylabel(f"Change from baseline")
         ax.set_xlabel("Wavelength (µm)")
         ax.yaxis.set_major_formatter(mpl.ticker.PercentFormatter(1.0))
-        ax.axhline(1, c="white", ls="dashed")
+        ax.axhline(1, c="k", ls="dashed")
 
-    def make_parameters_plot(self):
+    def make_parameters_plot(self, ncol=3):
         p = self._get_all_params()
-        fig, axs = plt.subplots(len(p)//3, 3, figsize=(16, len(p)/3*1.2*1.5), sharex=True)
+        nrow = int(np.ceil(len(p) / ncol))
+
+        fig, axs = plt.subplots(nrow , ncol, figsize=(4*ncol, 1.5*nrow), sharex=True)
         axs = axs.flatten()
+
+        for ax in axs[-(nrow*ncol - len(p)):]:
+            ax.set_axis_off()
 
         for ax, name in zip(axs, p):
             self.plot_parameter(ax, *name)
             ax.set_ylabel("")
             ax.set_xlabel("")
-            ax.text(0.99, 0.05, " ".join(name), transform=ax.transAxes, ha="right", va="bottom")
+            ax.text(0.99, 0.05, " ".join(name).replace("_", " "), transform=ax.transAxes, ha="right", va="bottom")
 
         fig.supxlabel("Wavelength (µm)")
-        fig.supylabel("Radiance change from baseline")
+        fig.supylabel("Radiance change from baseline", x=0.01)
         fig.tight_layout()
         fig.savefig("plots/sensitivity.png", dpi=300)
     

@@ -259,7 +259,7 @@ class NemesisSpx(Parser):
                 self.spectrum[i] = s
                 self.error[i] = e
 
-    def write(self, filepath):
+    def write(self, filepath, exclude_nans=True):
         """
         Write an SPX file to disk
 
@@ -272,7 +272,10 @@ class NemesisSpx(Parser):
 
         lines = []
         lines.append(f'{self.fwhm}\t{self.lat}\t{self.lon}\t1')
-        mask = ~(np.isnan(self.spectrum) | np.isnan(self.error))
+        if exclude_nans:
+            mask = ~(np.isnan(self.spectrum) | np.isnan(self.error))
+        else:
+            mask = np.ones_like(self.spectrum).astype(bool)
         nconv = len(self.wavelengths[mask])
         lines.append(f'{nconv}')
         lines.append(f'{self.nav}')
@@ -287,6 +290,22 @@ class NemesisSpx(Parser):
 
         with open(filepath, 'w') as f:
             f.write('\n'.join(lines))
+
+    @property
+    def wavelength(self):
+        return self.wavelengths
+    
+    @wavelength.setter
+    def wavelength(self, value):
+        self.wavelengths = np.array(value)
+    
+    @property
+    def errors(self):
+        return self.error
+    
+    @errors.setter
+    def errors(self, value):
+        self.error = np.array(value)
 
     @classmethod
     def from_lists(cls,
@@ -441,6 +460,8 @@ class AerosolPrf(Parser):
     def add_aerosol_names(self):
         with open(Path(self.filepath).parent / "aerosol_names.txt") as file:
             names = file.read().split("\n")
+            if names == [""]:
+                return
             self.data.columns = ["height"] + names
 
 
