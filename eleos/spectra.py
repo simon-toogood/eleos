@@ -106,6 +106,32 @@ def downsample_spectrum(wavelengths, spectrum, errors=None, num_points=100, spec
     return wavelengths[final_indices], spectrum[final_indices]
 
 
+def wavelength_select(wavelengths, spectrum, errors=None, min_wl=None, max_wl=None):
+    """Select a range of wavelengths from a spectrum.
+    
+    Args:
+        wavelengths (np.ndarray): The wavelength grid
+        spectrum (np.ndarray):    The spectral data
+        errors (np.ndarray):      The error on the spectral data (optional)
+        min_wl (float):           The minimum wavelength to select
+        max_wl (float):           The maximum wavelength to select
+        
+    Returns:
+        wavelengths (np.ndarray): The trimmed wavelengths
+        spectrum (np.ndarray):    The trimmed spectrum
+        errors (np.ndarray):      The trimmed errors (if provided)"""
+    
+    mask = np.ones_like(wavelengths, dtype=bool)
+    if min_wl is not None:
+        mask &= wavelengths >= min_wl
+    if max_wl is not None:
+        mask &= wavelengths <= max_wl
+
+    if errors is not None:
+        return wavelengths[mask], spectrum[mask], errors[mask]
+    return wavelengths[mask], spectrum[mask]
+
+
 def get_nonlte_emission_mask(wavelengths, 
                              h3p_threshold=0.1, 
                              ch4_threshold=0.1, 
@@ -594,3 +620,32 @@ def get_single_spectra(file_pattern,
                 **other)
     
     return w, s, err
+
+
+def quickview(wavelength, spectrum, errors=None, log=True, block=True):
+    """Quickly view a spectrum using matplotlib.
+    
+    Args:
+        wavelength (np.ndarray): The wavelength grid
+        spectrum (np.ndarray):   The spectral data
+        errors (np.ndarray):     The error on the spectral data (optional)
+        log (bool):              Whether to use a logarithmic scale for the y-axis
+        block (bool):            Whether to block the execution until the plot is closed (default True
+    """
+    
+    import matplotlib.pyplot as plt
+
+    plt.figure(figsize=(10, 5))
+    plt.plot(wavelength, spectrum, label='Spectrum')
+    
+    if errors is not None:
+        plt.fill_between(wavelength, spectrum - errors, spectrum + errors, alpha=0.3, label='Error')
+    
+    if log:
+        plt.yscale('log')
+
+    plt.xlabel('Wavelength (microns)')
+    plt.ylabel('Radiance')
+    plt.legend()
+    plt.grid()
+    plt.show(block=block)

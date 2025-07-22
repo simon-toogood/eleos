@@ -166,7 +166,12 @@ class NemesisItr(Parser):
     
     def __init__(self, filepath, mre=None):
         if mre is None:
-            self.mre = NemesisMre(Path(filepath).parent / "nemesis.mre")
+            try:
+                fp = Path(filepath).parent / "nemesis.mre"
+                self.mre = NemesisMre(fp)
+            except:
+                print("Warning: Failed to load {fp}, skipping state vector linearisation")
+                self.mre = None
         else:
             self.mre = mre
         super().__init__(filepath)
@@ -186,10 +191,13 @@ class NemesisItr(Parser):
                         d.append(float(v))
                     data.append(d)
 
-        exps = []
-        for i, value in enumerate(data[0]):
-            flag = np.isclose(self.mre.initial_state_vector[i], np.exp(value))
-            exps.append(flag)
+        if self.mre is not None:
+            exps = []
+            for i, value in enumerate(data[0]):
+                flag = np.isclose(self.mre.initial_state_vector[i], np.exp(value))
+                exps.append(flag)
+        else:
+            exps = [False] * len(data[0])
 
         self.state_vectors = pd.DataFrame(data)
         for i, column in enumerate(self.state_vectors.columns):
@@ -373,7 +381,7 @@ class NemesisSpx(Parser):
         return spx_MJysr.value
 
 
-class NemesisInp(Parser):   
+class NemesisInp(Parser):
     """Parser for nemesis.inp
     
     Attributes:
@@ -540,3 +548,21 @@ class kTable(Parser):
             ktable_flat = np.frombuffer(f.read(total_values * 4), dtype=np.float32)
             self.ktable = ktable_flat.reshape((self.npoint, self.np_, self.nt, self.ng))
 
+
+class NemesisCov(Parser):
+    """Parser for nemesis.cov
+    
+    Attributes:
+        cov (np.ndarray): Covariance matrix of the retrieved parameters"""
+    
+    def read(self):
+        with open(self.filepath, 'r') as f:
+            lines = f.readlines()
+
+        _, nvar = utils.get_ints_from_string(lines[0])
+        nx, ny = utils.get_ints_from_string(lines[2*nvar + 1])
+        start = 2 * nvar + 2
+
+        sa = [utils.get_floats_from_string(lines[start + i]) for i in range(nx)]
+        self.sa = np.array(sa)
+ 

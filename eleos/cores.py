@@ -65,7 +65,6 @@ class NemesisCore:
                  forward=False,
                  num_iterations=30,
                  num_layers=120, 
-                 bottom_layer_height=None, 
                  min_pressure=None,
                  max_pressure=None,
                  instrument_ktables="NIRSPEC", 
@@ -87,7 +86,6 @@ class NemesisCore:
             forward (bool):               Whether of not to run a forward model (ie. set number of iterations = 0)
             num_iterations (int):         Number of iterations to run in the retrieval (if forward is set this has no effect)
             num_layers (int):             The number of atmospheric layers to simulate
-            bottom_layer_height (int):    The height in km of the bottom of the atmosphere (by default it uses the lowest height in the .ref file)
             min_pressure (float):         The pressure at the top of the model atmosphere
             max_pressure (float):         The pressure at the bottom of the model atmosphere
             instrument_ktables (str):     Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use.
@@ -140,21 +138,8 @@ class NemesisCore:
         # Parse the ref file:
         self.ref = parsers.NemesisRef(self.ref_file)
 
-        # Set bottom layer height if not defined
-        if bottom_layer_height is None:
-            self.bottom_layer_height = self.ref.data.iloc[0].height
-        else:
-            self.bottom_layer_height = bottom_layer_height
-
         # Set min/max pressures
-        if min_pressure is None:
-            self.min_pressure = self.ref.data.pressure.min()
-        else:
-            self.min_pressure = min_pressure
-        if max_pressure is None:
-            self.max_pressure = self.ref.data.pressure.max()
-        else:
-            self.max_pressure = max_pressure
+        self.set_pressure_limits(min_pressure, max_pressure)
 
         # Set number of aerosol modes (incremented by add_profile)
         self.num_aerosol_modes = 0
@@ -835,8 +820,8 @@ class NemesisCore:
             profile: profiles.Profile object to add
 
         Returns:
-            None"""
-        
+            None
+        """
         self.profiles[profile.label] = profile
         profile.core = self
 
@@ -846,6 +831,23 @@ class NemesisCore:
 
             # Assign aerosol IDs
             profile.aerosol_id = self.num_aerosol_modes
+
+    def remove_profile(self, profile_label):
+        """Remove a profile. WIP - DOES NOT WORK FOR AEROSOL PROFILES
+        
+        Args:
+            profile_label (str): The label of the profile to remove
+            
+        Returns:
+            None
+        """
+        profile = self.profiles[profile_label]
+
+        if isinstance(profile, profiles_.AerosolProfile):
+            # Decrement aerosol mode counter        
+            self.num_aerosol_modes -= 1
+
+        del self.profiles[profile_label]
 
     def fix_peak(self, central_wavelength, width, error=1e-15):
         """Set a region of the spectra to be fixed (ie. NEMESIS will be forced to match it). This is done internally by setting the
@@ -875,6 +877,28 @@ class NemesisCore:
                 if match:
                     gas_names.append(match.group(1))
         return gas_names
+
+    def set_pressure_limits(self, max_pressure, min_pressure):
+        """Change the pressure limits of the core. Also sets the bottom layer height to the closest value in the .ref file
+        
+        Args:
+            min_pressure (float): The new minimum pressure in mbar. If None then use the minimum pressure in the .ref file
+            max_pressure (float): The new maximum pressure in mbar. If None then use the maximum pressure in the .ref file
+            
+        Returns:
+            None"""
+        
+        if min_pressure is None:
+            self.min_pressure = self.ref.data.pressure.min()
+        else:
+            self.min_pressure = min_pressure
+        if max_pressure is None:
+            self.max_pressure = self.ref.data.pressure.max()
+        else:
+            self.max_pressure = max_pressure
+
+        i, _ = utils.find_nearest(self.ref.data.pressure, self.max_pressure)
+        self.bottom_layer_height = self.ref.data.height.iloc[i]
 
     def get_height_limits(self):
         """Get the heights of the top and bottom layers of the atmosphere in km.
@@ -926,7 +950,7 @@ class NemesisCore:
         print("Generated priors!")
 
     def get_profile_variable_names(self):
-        """Return the names of the variables in each profile. 
+        """Return the names of the variables (ie the parameters that NEMESIS can vary) in each profile. 
         See also: `get_profile_constant_names` and get_profile_parameter_names`
         
         Args:
@@ -941,7 +965,7 @@ class NemesisCore:
         return out
 
     def get_profile_constant_names(self):
-        """Return the names of the constants in each profile. 
+        """Return the names of the constants (ie. the parameters that NEMESIS doesnt fit) in each profile. 
         See also: `get_profile_constant_names` and get_profile_parameter_names`
         
         Args:
