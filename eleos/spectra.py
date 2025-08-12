@@ -10,6 +10,7 @@ from collections import defaultdict
 from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
+from scipy.signal import fftconvolve
 
 from . import utils
 from . import spx
@@ -200,18 +201,6 @@ def subtract_ch4(wavelengths, spectrum, nlines=25, linewidth=0.008, A0=1e-6, lin
         np.ndarray: The spectrum with CH4 subtracted in units of W/cm2/sr/um
     """
 
-    def gaussian(x, A, mu, fwhm, offset):
-        sigma = fwhm / 2.35482
-        # sigma = 0.03 / 2.35482
-        return A * np.exp(-((x - mu)**2) / (2 * sigma**2)) + offset
-
-    def lorentzian(x, A, mu, fwhm, offset):
-        return A / (1 + ((x - mu) / (fwhm / 2))**2) + offset
-
-    def voigt(x, A, mu, fwhm, offset):
-        sigma = fwhm / 2.35482
-        return A * np.exp(-((x - mu)**2) / (2 * sigma**2)) / (1 + ((x - mu) / (fwhm / 2))**2) + offset
-
     def multifunc(x, func, p0s):
         total = np.zeros_like(x)
         for p in p0s:
@@ -248,13 +237,13 @@ def subtract_ch4(wavelengths, spectrum, nlines=25, linewidth=0.008, A0=1e-6, lin
         plt.hlines(y=offset_0/1e8, xmin=line-linewidth/2, xmax=line+linewidth/2, color="magenta")
         
         try:
-            popt, pcov = curve_fit(eval(lineshape), 
+            popt, pcov = curve_fit(eval("utils."+lineshape), 
                                    w, s, 
                                    p0=     [A0,      line,                linewidth/2,    offset_0],
                                    bounds=([0,       line - linewidth/2,  linewidth*0.2,  offset_0*0.9], 
                                            [np.inf,  line + linewidth/2,  linewidth*2,    offset_0*1.1]),)
             fits.append(popt)
-            plt.plot(w, eval(lineshape)(w, *popt)/1e8, color="magenta")
+            plt.plot(w, eval("utils."+lineshape)(w, *popt)/1e8, color="magenta")
 
         except (RuntimeError, ValueError) as e:
             print(f"[eleos] Failed to fit CH4 line at {line:.3f} um: {e}")
@@ -264,7 +253,7 @@ def subtract_ch4(wavelengths, spectrum, nlines=25, linewidth=0.008, A0=1e-6, lin
         fits[i][3] = 0
 
     # Add all the lines together to make the final model
-    model = multifunc(wavelengths, eval(lineshape), fits)
+    model = multifunc(wavelengths, eval("utils."+lineshape), fits)
     subtracted = spectrum - model
 
     # Restore original NaNs to the spectrum
@@ -584,6 +573,39 @@ def combine_multiple_spectra(*spectra_units):
 
     idx = np.argsort(all_wl)
     return all_wl[idx], all_flux[idx], all_err[idx]
+
+
+def convolve_gaussian(data, wavelength, R, lambda0):
+    """Convolve a spectrum with a Gaussian, assuming constant R. In reality resolution varies as a function of wavelength and
+    depends on the filters used (for JWST/NIRSpec see https://jwst-docs.stsci.edu/jwst-near-infrared-spectrograph/nirspec-instrumentation/nirspec-dispersers-and-filters)
+    
+    Args:
+        data (np.ndarray):       The data to be convolved.
+        wavelength (np.ndarray): Wavelength array (same length as data).
+        R (float):               Resolving power of the instrument
+        lambda0 (float):         The wavelength at which R is defined. For G395H this is ~4um. For G235H this is ~2.4um.
+    Returns:
+        np.ndarray: The convolved data.
+    """
+    wavelength = np.asarray(wavelength)
+        
+    # FWHM and sigma in wavelength units
+    fwhm = lambda0 / R
+    sigma = fwhm / 2.35482
+
+    # Build Gaussian kernel in wavelength space
+    # Kernel extends to 4 sigma for good truncation
+    dw = np.median(np.diff(wavelength))  # wavelength step
+    half_width = int(np.ceil(4 * sigma / dw))
+    x = np.arange(-half_width, half_width + 1) * dw
+
+    kernel = np.exp(-(x**2) / (2 * sigma**2))
+    kernel /= kernel.sum()  # normalize so area = 1
+
+    # Convolve using FFT for efficiency
+    convolved = fftconvolve(data, kernel, mode='same')
+
+    return convolved
 
 
 def quickview(wavelength, spectrum, errors=None, log=True, block=True):

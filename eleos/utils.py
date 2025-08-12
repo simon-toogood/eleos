@@ -6,6 +6,24 @@ import re
 
 
 
+# Spectral lineshapes
+
+def gaussian(x, A, mu, fwhm, offset):
+        sigma = fwhm / 2.35482
+        # sigma = 0.03 / 2.35482
+        return A * np.exp(-((x - mu)**2) / (2 * sigma**2)) + offset
+
+
+def lorentzian(x, A, mu, fwhm, offset):
+    return A / (1 + ((x - mu) / (fwhm / 2))**2) + offset
+
+
+def voigt(x, A, mu, fwhm, offset):
+    sigma = fwhm / 2.35482
+    return A * np.exp(-((x - mu)**2) / (2 * sigma**2)) / (1 + ((x - mu) / (fwhm / 2))**2) + offset
+
+
+
 # NumPy extension functions
 
 def find_nearest(array, value):
@@ -24,9 +42,18 @@ def find_nearest(array, value):
     return idx, array[idx]
 
 
-def nanaverage(data, weights, axis=None):
+def nanaverage(data, weights=None, **kwargs):
+    """Take the average (mean) of a np array, ignoring NaN values
+    
+    Args:
+        data (np.ndarray): The data to be averaged
+        weights (np.ndarray): Optionally, weights for each point
+        kwargs passed to np.ma.average()
+        
+    Returns:
+        np.MaskedArray or float: The averaged data"""
     ma = np.ma.MaskedArray(data, mask=np.isnan(data))
-    return np.ma.average(ma, weights=weights)
+    return np.ma.average(ma, weights=weights, **kwargs)
 
 
 # Matplotlib extension functions
