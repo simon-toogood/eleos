@@ -352,6 +352,8 @@ class AerosolProfile(Profile):
 
         # Set the prior errors if retrieving
         if retrieve_optical:
+            if isinstance(self.shape, shapes.Shape227):
+                raise ValueError("Shape227 does not support retrieval of optical properties. Please use a different shape.")
             self.CONSTANTS = self.shape.CONSTANTS + ["real_n"]
             self.VARIABLES = self.shape.VARIABLES + ["radius", "variance", "imag_n"]
             self.radius_error = radius_error

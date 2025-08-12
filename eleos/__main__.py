@@ -7,10 +7,10 @@ from . import results
 
 """Call signatures:
 
-python -m eleos --make_summary <core_directory>
+python -m eleos <core_directory> --make_summary
 Print the summary tables and generate summary and iteration plots for the given core
 
-python -m eleos --make-sensitivity-summary <parent_directory>
+python -m eleos <parent_directory> --make-sensitivity-summary 
 For a directory containing a sensitivity analysis, create a plot showing the effect changing
 each parameter has on the spectrum
 

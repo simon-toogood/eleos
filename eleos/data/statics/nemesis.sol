@@ -1,1 +1,0 @@
-solar_spec.dat

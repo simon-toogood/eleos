@@ -14,6 +14,7 @@ warnings.formatwarning = lambda msg, *_: f"Warning: {msg}\n"
 from . import utils
 from . import constants
 from . import profiles as profiles_
+from . import shapes
 
 
 ## TODO: Move all parsing routines here, .itr, .prc etc...
@@ -207,6 +208,8 @@ class NemesisItr(Parser):
     def add_column_names(self, profiles):
         names = []
         for label, profile in profiles.items():
+            if isinstance(profile.shape, shapes.Shape0):
+                names += [f"{label} {n}" for n in range(120)]
             names += [f"{label} {n}" for n in profile.VARIABLES]
         self.state_vectors.columns = names
 
@@ -238,8 +241,8 @@ class NemesisSpx(Parser):
         nav (int):                nav
         fwhm (float):             FWHM of the instrument
         wavelengths (np.ndarray): Wavelengths of the observed spectra in um
-        spectrum (np.ndarray):    The observed spectra in uW/cm2/sr/um
-        error (np.ndarray):       The error on the observed spectra in uW/cm2/sr/um
+        spectrum (np.ndarray):    The observed spectra in W/cm2/sr/um
+        error (np.ndarray):       The error on the observed spectra in W/cm2/sr/um
     """
 
     def read(self):
@@ -322,6 +325,25 @@ class NemesisSpx(Parser):
                    error, 
                    lat, lon, phase, emission, azimuth, fwhm=0,
                    convert=True):
+        """Create a new NemesisSpx object from three lists (wavelength, spectrum, errors) and a set of parameters (lat, lon etc...)
+        See also: `NemesisSpx.get_angles()`
+
+        Args:
+        wavelengths (list or array-like): Wavelength values of the observation.
+        spectrum (list or array-like): Measured spectral radiance/reflectance values in units of MJy/sr or W/cm2/sr/um (see `convert`).
+        error (list or array-like): Measurement uncertainties for each spectral point.
+        lat (float): Latitude of the observation point (degrees).
+        lon (float): Longitude of the observation point (degrees).
+        phase (float): Phase angle between the observer, target, and light source (degrees).
+        emission (float): Emission angle of the observation (degrees).
+        azimuth (float): Azimuth angle (degrees).
+        fwhm (float, optional): Full width at half maximum of the spectral resolution. Defaults to 0.
+        convert (bool, optional): If True, converts the input values from MJy/sr to W/cm2/sr/um.
+                                  Defaults to False.
+
+        Returns:
+            NemesisSpx: A new instance populated with the given spectral and geometric data.
+"""
         spx = cls.__new__(cls)
         if convert:
             spx.spectrum = NemesisSpx.convert_MJysr_to_Wcm2srum(wavelengths, spectrum)
@@ -340,6 +362,26 @@ class NemesisSpx(Parser):
         spx.nav = 1
         spx.wgeom = 1
         return spx
+
+    def get_angles(self):
+        """
+        Retrieve the geometric parameters of the observation. useful for creating modified versions of the same spectrum (see `NemesisSpx.from_lists()`)
+
+        Returns:
+            dict: Dictionary containing:
+                - 'lat' (float): Latitude in degrees.
+                - 'lon' (float): Longitude in degrees.
+                - 'phase' (float): Phase angle in degrees.
+                - 'emission' (float): Emission angle in degrees.
+                - 'azimuth' (float): Azimuth angle in degrees.
+        """
+        return {
+            "lat": self.lat,
+            "lon": self.lon,
+            "phase": self.phase,
+            "emission": self.emission,
+            "azimuth": self.azimuth
+        }
 
     @staticmethod
     def convert_MJysr_to_Wcm2srum(

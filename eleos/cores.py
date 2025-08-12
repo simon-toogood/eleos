@@ -36,6 +36,8 @@ class NemesisCore:
         profiles (dict):              A dictionary of profiles.Profile objects to retrieve, where the keys are the profile labels and the values are the Profile objects themselves
         spx_file (Path):              The path to the spectrum file to fit
         ref_file (Path):              The path to the ref file to use
+        cia_file (Path):              The path to the collision-induced absorbtion file to use (default: mgRT_mgRV_40-400K_dnu4.0.tab, warning: assumes d nu = 4.0)
+        sol_file (Path):              The path to the solar spectrum file to use (default: solar_spectrum.dat)
         ref (parsers.NemesisRef):     The parsed ref file
         planet (str):                 The name of the planet being observed
         scattering (bool):            Whether to run a scattering retrieval or not
@@ -46,7 +48,7 @@ class NemesisCore:
         layer_type (int):             The type of layering to use 
         min_pressure (float):         The minimum pressure in the atmosphere
         max_pressure (float):         The maximum pressure in the atmosphere
-        bottom_layer_height (int):    The height in km of the bottom of the atmosphere (by defauylt use the lowest height in the .ref file)
+        bottom_layer_height (int):    The height in km of the bottom of the atmosphere
         fixed_peaks (list):           A list of FixedPeak objects that specify regions of the spectrum to fix
         instrument_ktables (str):     Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use.
         fmerror_factor (float):       The factor by which to multiply the error on the spectrum (see also, fmerror_pct and fmerror_value)
@@ -59,11 +61,13 @@ class NemesisCore:
                  parent_directory,
                  spx_file, 
                  ref_file=None, 
+                 cia_file=None,
+                 sol_file=None,
                  profiles=list(), 
                  planet="jupiter", 
                  scattering=True, 
                  forward=False,
-                 num_iterations=30,
+                 num_iterations=20,
                  num_layers=120, 
                  min_pressure=None,
                  max_pressure=None,
@@ -135,6 +139,32 @@ class NemesisCore:
         else:
             self.ref_file = ref_file
 
+        # Set cia file if not set
+        if cia_file is not None:
+            # if the file can be found from here then it is not in raddata, so add it
+            if Path(cia_file).exists():
+                add_to_raddata(cia_file)
+                
+            # If it isnt in raddata either, raise an error
+            elif not (constants.NEMESIS_PATH / "radtrancode/raddata" / Path(cia_file)).exists():
+                raise FileNotFoundError(f"Could not find {cia_file} here or in raddata/")
+            self.cia_file = Path(cia_file).name
+        else:
+            self.cia_file = Path("mgRT_mgRV_40-400K_dnu4.0.tab")
+
+        # Set sol file if not set
+        if sol_file is not None:
+            # if the file can be found from here then it is not in raddata, so add it
+            if Path(sol_file).exists():
+                add_to_raddata(sol_file)
+                
+            # If it isnt in raddata either, raise an error
+            elif not (constants.NEMESIS_PATH / "radtrancode/raddata" / Path(sol_file)).exists():
+                raise FileNotFoundError(f"Could not find {sol_file} here or in raddata/")
+            self.sol_file = Path(sol_file).name 
+        else:
+            self.sol_file = Path("solar_spectrum.dat")
+
         # Parse the ref file:
         self.ref = parsers.NemesisRef(self.ref_file)
 
@@ -174,7 +204,7 @@ class NemesisCore:
         if value:
             self.num_iterations = 0
         else:
-            self.num_iterations = 30
+            self.num_iterations = 20
 
     def _create_directory_tree(self, prompt_if_exists):
         os.makedirs(self.parent_directory, exist_ok=True)
@@ -235,15 +265,42 @@ class NemesisCore:
             None
             
         Creates:
-            nemesis.cia
             nemesis.abo
-            nemesis.nam
-            nemesis.sol
-            maskephase.inp"""
-        shutil.copy(constants.PATH / "data/statics/nemesis.cia", self.directory)
+            nemesis.nam"""
         shutil.copy(constants.PATH / "data/statics/nemesis.abo", self.directory)
         shutil.copy(constants.PATH / "data/statics/nemesis.nam", self.directory)
-        shutil.copy(constants.PATH / "data/statics/nemesis.sol", self.directory)
+
+    def _generate_cia(self):
+        """Generate the .cia (collision induced absorbtion) file
+        
+        Args:
+            None
+            
+        Returns:
+            None
+            
+        Creates:
+            nemesis.cia
+        """
+        with open(self.directory / "nemesis.cia", mode="w+") as file:
+            file.write(self.cia_file.name + "\n")
+            file.write("4.00000\n")
+            file.write("24\n")
+
+    def _generate_sol(self):
+        """Generate the .sol (solar spectrum) file
+        
+        Args:
+            None
+            
+        Returns:
+            None
+            
+        Creates:
+            nemesis.cia
+        """
+        with open(self.directory / "nemesis.sol", mode="w+") as file:
+            file.write(self.sol_file.name)
 
     def _generate_inp(self):
         """Generate the nemesis input file
@@ -673,6 +730,12 @@ class NemesisCore:
         if verbosity == 2: print(f"Generating pressure.lay")
         self._generate_pressure_lay()
 
+        if verbosity == 2: print(f"Generating nemesis.sol")
+        self._generate_sol()
+
+        if verbosity == 2: print(f"Generating nemesis.cia")
+        self._generate_cia()
+
         if verbosity == 2: print(f"Generating nemesis.inp")
         self._generate_inp()
         
@@ -949,6 +1012,25 @@ class NemesisCore:
                     continue
         print("Generated priors!")
 
+    def create_arbitrary_file(self, filepath, *cols, header=None):
+        """Create a file with the pressures in the first columns and then a set of lists for each subsequent column
+        
+        Args:
+            filepath (str): The path to the new file to be created
+            *cols List[float]: The values to put in each column
+            
+        Returns:
+            None"""
+
+        with open(filepath, mode="w+") as file:
+            if header is not None:
+                file.write(header + "\n")
+            for i, p in enumerate(self.ref.data.pressure):
+                values = [p] + [c[i] for c in cols]
+                line = "  ".join([f"{x:.8e}" for x in values])
+                print(line)
+                file.write(line + "\n")
+
     def get_profile_variable_names(self):
         """Return the names of the variables (ie the parameters that NEMESIS can vary) in each profile. 
         See also: `get_profile_constant_names` and get_profile_parameter_names`
@@ -1009,6 +1091,10 @@ class FixedPeak:
     def isin(self, wl):
         return (wl > self.central_wavelength - self.width/2) & (wl < self.central_wavelength + self.width/2)
     
+
+def add_to_raddata(filepath):
+    return shutil.copy(filepath, constants.NEMESIS_PATH / "radtrancode/raddata")
+
 
 def load_core(core_directory):
     """Load a NemesisCore object saved using NemesisCore._save_core. Do not use this to load a core that has been retrieved;

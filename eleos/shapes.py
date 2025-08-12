@@ -44,6 +44,8 @@ from dataclasses import dataclass
 from typing import ClassVar
 import shutil
 
+from . import parsers
+from . import utils
 
 
 def shapeclass(*args, **kwargs):
@@ -90,17 +92,40 @@ class Shape0(Shape):
     """Profile is to be treated as continuous over the pressure range of runname.ref, the
     next line of the .apr file should then contain a filename, which specifies the a
     priori profile as a function of height and should have the same number of levels
-    as the .ref file."""
+    as the .ref file.
+    
+    In Eleos, one can specify either a filepath or give the values and error to be used directly"""
     ID: ClassVar[int] = 0
     CONSTANTS: ClassVar[list[str]] = []
     VARIABLES: ClassVar[list[str]] = []
-    filepath: str
+    filepath: str = None
+    values: list[float] = None
+    errors: list[float] = None
 
     def create_required_files(self, directory):
-        shutil.copy(self.filepath, directory)
+        # If the file is specified, copy it to the core and read the values into the internal state
+        if self.filepath is not None:
+            shutil.copy(self.filepath, directory)
+            self.values = []
+            self.errors = []
+            with open(self.filepath) as file:
+                lines = file.read().split("\n")[1:]
+                for line in lines:
+                    p, v, e = utils.get_floats_from_string(line)
+                    self.values.append(v)
+                    self.errors.append(e)
+        
+        # Otherwise, the values/errors are given directly so write these to a new file
+        else:
+            self.filepath = directory / "shape0.dat"
+            ref = parsers.NemesisRef(directory / "nemesis.ref")
+            with open(self.filepath, mode="w+") as file:
+                file.write(f"{len(ref.data.pressure)} 1\n#")
+                for p, v, e in zip(ref.data.pressure, self.values, self.errors):
+                    file.write(f"{p:08e}  {v:08e}  {e:08e}\n")
 
     def generate_apr_data(self):
-        return self.filepath.split("/")[-1]
+        return self.filepath.name
 
 @shapeclass
 class Shape1(Shape):
@@ -256,7 +281,7 @@ class Shape48(Shape):
 
     def generate_apr_data(self):
         return f"{self.base_pressure} {self.base_pressure_error}\n{self.top_pressure} {self.top_pressure_error}\n{self.opacity} {self.opacity_error}\n{self.fsh} {self.fsh_error}"
-        
+    
 
 def get_shape_from_id(id_):
     """Given a shape ID integer, return a reference to the class corresponding to that ID. Note that this returns a class, not an instantiated object.

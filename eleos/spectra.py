@@ -7,30 +7,13 @@ import scipy
 import copy
 from astropy.io import fits
 from collections import defaultdict
-from scipy.interpolate import UnivariateSpline
-from scipy.signal import butter, lfilter
+from scipy.optimize import curve_fit
+import matplotlib.pyplot as plt
+from scipy.interpolate import interp1d
 
 from . import utils
 from . import spx
 from . import constants
-from . import ch4
-
-
-def trim_spectra(spectra, wavelengths, min_wl=-float("inf"), max_wl=float("inf")):
-    """Trim a spectra between two wavelengths
-    
-    Args:
-        spectra (np.ndarray): The spectra data
-        wavelengths (np.ndarray): The corresponding wavelengths
-        min_wl (float): The wavlength below which to cut out
-        max_wl (float): The wavelength above which to cut out
-        
-    Returns:
-        spectra (np.ndarray): The trimmed spectra
-        wavelengths (np.ndarray): The trimmed wavelengths"""
-    
-    mask = (wavelengths > min_wl) & (wavelengths < max_wl)
-    return spectra[mask], wavelengths[mask]
 
 
 def margin_trim(cube, margin_size=3):
@@ -121,6 +104,7 @@ def wavelength_select(wavelengths, spectrum, errors=None, min_wl=None, max_wl=No
         spectrum (np.ndarray):    The trimmed spectrum
         errors (np.ndarray):      The trimmed errors (if provided)"""
     
+    
     mask = np.ones_like(wavelengths, dtype=bool)
     if min_wl is not None:
         mask &= wavelengths >= min_wl
@@ -132,254 +116,168 @@ def wavelength_select(wavelengths, spectrum, errors=None, min_wl=None, max_wl=No
     return wavelengths[mask], spectrum[mask]
 
 
-def get_nonlte_emission_mask(wavelengths, 
-                             h3p_threshold=0.1, 
-                             ch4_threshold=0.1, 
-                             h3p_expand=3, 
-                             ch4_expand=3):
-    """Use a model to mask out any parts of the spectrum where H3+ and CH4 non-LTE
-    emission is above a threshold relative to their highest peaks.
-    
-    Args:
-        wavelengths (np.ndarray): The corresponding wavelengths
-        h3p_threshold (float): The threshold above which to exclude data due to H3+ emission
-        ch4_threshold (float): The threshold above which to exclude data due to CH4 emission
-        h3p_expand (int): If non-zero, then expand and excluded regions to include the nearest `expand` wavelengths
-        ch4_expand (int): If non-zero, then expand and excluded regions to include the nearest `expand` wavelengths
-
-    Returns:
-        np.ndarray: The H3+ mask
-        np.ndarray: The CH4 mask
-    """
-    
-    def expand_mask(mask, by):
-        arr = mask.copy()
-        for i in range(1, by+1):
-            rolled_fwd = np.roll(mask, (i))
-            rolled_fwd[:i] = 0
-            rolled_bck = np.roll(mask, -i)
-            rolled_bck[-i:] = 0
-            arr = arr | rolled_fwd | rolled_bck
-        return arr
-    
-    if not (2.8 < wavelengths[0] < 5.3 and 2.8 < wavelengths[-1] < 5.3):
-        raise NotImplementedError("Non-LTE subtraction only works for G395H data at the moment.")
-    
-    h3p = pd.read_csv(constants.PATH / "data/misc/H3p_G395H_model.txt", sep=" ", names=["wavelengths", "spectrum"])
-    ch4 = pd.read_csv(constants.PATH / "data/misc/CH4_G395H_model.txt", sep=" ", names=["wavelengths", "spectrum"])
-
-    h3p_mask = []
-    ch4_mask = []
-
-    for w in wavelengths:
-        i, _ = utils.find_nearest(h3p.wavelengths, w)
-        h3p_mask.append((h3p.spectrum[i] / np.nanmax(h3p.spectrum)) > h3p_threshold)
-        ch4_mask.append((ch4.spectrum[i] / np.nanmax(ch4.spectrum)) > ch4_threshold)
-
-    h3p_mask = expand_mask(np.array(h3p_mask), h3p_expand)
-    ch4_mask = expand_mask(np.array(ch4_mask), ch4_expand)
-
-    return h3p_mask, ch4_mask
-
-
-def subtract_non_lte(wavelengths, spectrum, print_info=False):
-    """Utility function for combining compute_lowpass_background, subtract_h3p and subtract_ch4.
-    For more fine-grained control, use those function independently.
-    
-    Args:
-        wavelengths (np.ndarray): Wavelength grid (microns)
-        spectrum (np.ndarray):    Spectral data (in units of uW/cm2/sr/um)
-        print_info (bool):        Whether to print the fitted parameters (eg. H3+ temp/density, CH4 scaling...)
-        
-    Returns:
-        np.ndarray: The spectrum with H3+ and CH4 removed"""
-
-    bkg = compute_lowpass_background(wavelengths, spectrum)
-    h3p_subtracted, h3p = subtract_h3p(wavelengths, 
-                                       spectrum, 
-                                       bkg, 
-                                       return_model=True)
-    ch4_subtracted, popt, pcov, func = subtract_ch4(wavelengths, 
-                                                    h3p_subtracted, 
-                                                    bkg, 
-                                                    return_model=True)
-    ch4_subtracted[ch4_subtracted < 1e-3] = np.nan
-
-    if print_info:
-        print(f"H3+ Temperature: {h3p.vars['temperature']}K")
-        print(f"H3+ Density: {h3p.vars['density']}m-2\n")
-        print(f"CH4 Fundamental scaling: {popt[0]}")
-        print(f"CH4 Hot scaling: {popt[1]}")
-        print(f"CH4 Linear gradient: {popt[2]}")
-        print(f"CH4 Linear intercept: {popt[3]}")
-
-
-    return ch4_subtracted
-
-
-def compute_spline_background(wavelengths, spectrum, bin_width=10, return_spline=False, **spline_kwargs):
-    """Compute a polynomial background for a spectrum  by binning the spectrum and finding the minima
-    in each bin, then fitting a polynomial to those points.
-    
-    Args:
-        wavelengths (np.ndarray): The corresponding wavelengths
-        spectra (np.ndarray):     The spectral data
-        bin_width (float):        The width of the bins to use for the polynomial fit (in index units, not wavelength units)
-        return_spline (bool):     If True, then return the polynomial coefficients instead of the evaluated background
-        **spline_kwargs:          Additional keyword arguments to pass to the UnivariateSpline constructor
-
-    Returns:
-        np.ndarray: The polynomial background evaluated at the given wavelengths
-        scipy.interpolate.UnivariateSpline: Only if return_spline, the spline object
-    """
-    
-    def bottom_nth(wavelengths, spectrum, nm=10, nx=1):
-        # Find the 5th percentile value
-        lower = np.nanpercentile(spectrum, 0.01)
-        upper = 99#np.nanpercentile(spectrum, 100 - nm)
-        mask = (spectrum > lower) & (spectrum < upper)
-        low_vals = spectrum[mask]
-        low_waves = wavelengths[mask]
-
-        # Use mean of low values and corresponding wavelengths
-        avg_wave = np.nanmean(low_waves)
-        avg_log_val = np.nanmean(np.log(low_vals))
-
-        return avg_wave, avg_log_val
-
-    num_points = len(spectrum)
-    bin_edges = np.arange(0, num_points, bin_width, dtype=int)
-
-    bin_centers = []
-    bin_log_minima = []
-
-    for i in range(len(bin_edges) - 1):
-        start = bin_edges[i]
-        end = bin_edges[i + 1]
-        bin_slice = spectrum[start:end]
-        bin_waves = wavelengths[start:end]
-
-        if len(bin_slice) == 0:
-            continue
-
-        avg_wave, avg_log_val = bottom_nth(bin_waves, bin_slice)
-
-        bin_centers.append(avg_wave)
-        bin_log_minima.append(avg_log_val)
-
-    spl = UnivariateSpline(bin_centers, bin_log_minima, **spline_kwargs)
-    bkg = np.exp(spl(wavelengths))
-
-    if return_spline:
-        return bkg, spl
-    else:
-        return bkg
-
-
-def compute_lowpass_background(wavelengths, spectrum):
-    
-    def butter_lowpass_filter(data, cutoff, fs, order=5):
-        b, a = butter(order, cutoff, fs=fs, btype='low', analog=False)
-        y = lfilter(b, a, data)
-        return y
-
-    h3pmask, ch4mask = get_nonlte_emission_mask(wavelengths)
-    mask = h3pmask | ch4mask | np.isnan(spectrum)
-
-    spectrum_interp = np.interp(wavelengths[mask], wavelengths[~mask], spectrum[~mask])
-    spec = spectrum.copy()
-    spec[mask] = spectrum_interp
-    n = 17
-    spec = np.concatenate((spec[n:], np.full(n, spec[-1])))
-
-    fs = 1 / (wavelengths[1] - wavelengths[0])
-    cutoff = 50
-    bkg = np.exp(butter_lowpass_filter(np.log(spec), cutoff, fs))
-
-    return bkg
-
-
 def interpolate_nans(wavelengths, spectrum):
     mask = ~np.isnan(spectrum)
     return np.interp(wavelengths, wavelengths[mask], spectrum[mask])
 
 
-def subtract_h3p(wavelengths, spectrum, neutral_model, region=(3.5, 3.6), return_model=False, **h3p_kwargs):
-    """Subtract H3+ emission form a spectrum, using a neutral model as the background
+def subtract_non_lte(wavelengths, spectrum):
+    """Utility function for combining subtract_h3p and subtract_ch4.
+    For more fine-grained control, use those function independently.
     
+    Args:
+        wavelengths (np.ndarray): Wavelength grid (microns)
+        spectrum (np.ndarray):    Spectral data (in units of W/cm2/sr/um)
+        
+    Returns:
+        np.ndarray: The wavelength grid (unchanged)
+        np.ndarray: The spectrum with H3+ and CH4 removed"""
+
+    h3p_subtracted = subtract_h3p(wavelengths, spectrum)
+    ch4_subtracted = subtract_ch4(wavelengths, h3p_subtracted)
+
+    return wavelengths, ch4_subtracted
+
+
+def subtract_h3p(wavelengths, spectrum, latitude=-60, region=(3.525, 3.55), return_model=False, **h3p_kwargs):
+    """Subtract H3+ emission from a spectrum
+
     Args:  
         wavelengths (np.ndarray):    Wavelength grid
-        spectrum (np.ndarray):       Measured spectrum in units of uW/cm2/sr/um
-        neutral_model (np.ndarray):  NEMESIS-fitted neutral atmosphere model in units of uW/cm2/sr/um
+        spectrum (np.ndarray):       Measured spectrum in units of W/cm2/sr/um
         region (float, float):       The region to use to fit the H3+ model (by default this is a triple of bright lines)
         return_model (bool):         If True, then return the h3p object used for the fit
     
     Returns:
-        np.ndarray: Spectrum with H3+ subtracted in units of uW/cm2/sr/um
+        np.ndarray: Spectrum with H3+ subtracted in units of W/cm2/sr/um
         h3ppy.h3p:  If return_model, the h3p object that was used to fit
     """
-    spectrum = copy.deepcopy(spectrum) * 0.01
+    def remap(x, in_min, in_max, out_min, out_max):
+        return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
+
+    temp = remap(np.abs(latitude), 40, 90, 500, 1600)
+    density = remap(np.abs(latitude), 40, 90, 1e18, 1e19)
+
+    h3p_kwargs.setdefault("temperature", temp)
+    h3p_kwargs.setdefault("density", density)
+    h3p_kwargs.setdefault("R", 1700)
+
+    spectrum = copy.deepcopy(spectrum) * 10000 # Convert to W/m2/sr/um
+    nanmask = np.isnan(spectrum)
     spectrum = interpolate_nans(wavelengths, spectrum)
-    neutral_model = copy.deepcopy(neutral_model) * 0.01
-    h3p_mask = (wavelengths > region[0]) & (wavelengths < region[1])
-    h3p_wls = wavelengths[h3p_mask]
+    w, s = wavelength_select(wavelengths, spectrum, min_wl=region[0], max_wl=region[1])
 
     h3p = h3ppy.h3p()
-    h3p.set(R=2700, **h3p_kwargs, wave=h3p_wls, data=spectrum[h3p_mask])# - neutral_model[h3p_mask])
-    fit = h3p.fit()
+    h3p.set(**h3p_kwargs, wave=w, data=s)
+    # h3p.guess_density()
+    fit = h3p.fit(verbose=False)
     h3p.set(wave=wavelengths)
-    h3p_pred = h3p.model(nbackground=0)
+    h3p.print_vars()
+    h3p_pred = h3p.model(background_0=0)
     
-    subtracted = spectrum - h3p_pred
-
+    subtracted = (spectrum - h3p_pred) / 10000  # Convert back to W/cm2/sr/um
+    subtracted[nanmask] = np.nan  # Restore NaNs where they were in the original spectrum
+    subtracted[subtracted < 0] = np.nan  # Remove any negative values
     if return_model:
-        return subtracted * 100, h3p
+        return subtracted, h3p
     else:
-        return subtracted * 100
+        return subtracted
 
 
-def subtract_ch4(wavelengths, spectrum, neutral_model, region=(3.25, 3.4), include_linear=True, return_model=False):
-    """Subtract CH4 non-LTE emission form a spectrum, using a neutral model as the background.
-    It is highly recommended to subtract H3+ emission first using subtract_h3p()
+def subtract_ch4(wavelengths, spectrum, nlines=25, linewidth=0.008, A0=1e-6, lineshape="voigt", return_model=False):
+    """Subtract the brightest N individual CH4 lines from a spectrum.
     
-    Args:  
-        wavelengths (np.ndarray):    Wavelength grid
-        spectrum (np.ndarray):       Measured spectrum in units of uW/cm2/sr/um
-        neutral_model (np.ndarray):  NEMESIS-fitted neutral atmosphere model in units of uW/cm2/sr/um
-        region (float, float):       The region to use to fit the H3+ model (by default this is a triple of bright lines)
-        include_linear (bool):       Whether to include the linear offset in the fit or not (fits better, but is it physical?)
-        return_model (bool):         If True, then return the parameters and covaraince matrix for the fit
-    
+    Args:
+        wavelengths (np.ndarray): The wavelength grid
+        spectrum (np.ndarray):    The spectral data in units of W/cm2/sr/um
+        nlines (int):             The number of peaks to fit
+        linewidth (float):        The intial guess for the line FWHM in microns
+        A0 (float):               The initial guess for the amplitude of the lines
+        lineshape (str):          The shape of the lines to use, either 'gaussian', 'lorentzian', or 'voigt'
+        return_model (bool):      If True, then return the model spectrum as well as the final spectrum
+        
     Returns:
-        np.ndarray: Spectrum with CH4 subtracted in units uW/cm2/sr/um
-        np.ndarray: Only if return_model, the optimised parameters
-        np.ndarray: Only if return_model, the covariance matrix
-        function:   Only if return_model, the CH4 fit function
+        np.ndarray: The spectrum with CH4 subtracted in units of W/cm2/sr/um
     """
 
-    ch4_mask = (wavelengths > 3.25) & (wavelengths < 3.4)
-    ch4_wls = wavelengths[ch4_mask]
-    ch4_data = spectrum - neutral_model
-    ch4_data[~ch4_mask] = 0
-    ch4lines = ch4.fit_non_LTE_CH4_JWST(wavelengths)
+    def gaussian(x, A, mu, fwhm, offset):
+        sigma = fwhm / 2.35482
+        # sigma = 0.03 / 2.35482
+        return A * np.exp(-((x - mu)**2) / (2 * sigma**2)) + offset
 
-    if include_linear:
-        def ch4_model(_, fun_scale, hot_scale, m, c):
-            lines = ch4lines.ch4_fun*fun_scale + ch4lines.ch4_hot*hot_scale
-            x = np.arange(0, len(ch4lines.ch4_fun), 1)
-            linear = x*m + c
-            return lines * linear
-    else:
-        def ch4_model(_, fun_scale, hot_scale):
-            lines = ch4lines.ch4_fun*fun_scale + ch4lines.ch4_hot*hot_scale
-            return lines
+    def lorentzian(x, A, mu, fwhm, offset):
+        return A / (1 + ((x - mu) / (fwhm / 2))**2) + offset
+
+    def voigt(x, A, mu, fwhm, offset):
+        sigma = fwhm / 2.35482
+        return A * np.exp(-((x - mu)**2) / (2 * sigma**2)) / (1 + ((x - mu) / (fwhm / 2))**2) + offset
+
+    def multifunc(x, func, p0s):
+        total = np.zeros_like(x)
+        for p in p0s:
+            total += func(x, *p)
+        return total 
+    
+    nanmask = np.isnan(spectrum)
+    spectrum = interpolate_nans(wavelengths, spectrum) # linearly interpolate nans
+    spectrum *= 1e8 # numerical stability
+    lines = []
+    i = 0
+    centre_l = 3.3
+    centre_r = 3.35
+
+    # Extract the N most intense lines from the CH4 spectrum that have a minimum spacing (prevent picking out double lines)
+    for _, line in constants.CH4_LINES.iterrows():
+        wavelength = line["wavelength"]
+        if all(abs(wavelength - existing) > linewidth for existing in lines) and not centre_l < wavelength < centre_r:
+            lines.append(wavelength)
+            i += 1
+        if i >= nlines:
+            break
+
+    # Fit each of those lines
+    fits = []
+    for line in lines:
+        if not np.nanmin(wavelengths) < line < np.nanmax(wavelengths):
+            continue
+        w, s = wavelength_select(wavelengths, 
+                                 spectrum, 
+                                 min_wl=line - linewidth, 
+                                 max_wl=line + linewidth)
+        offset_0 = np.nanmedian(np.nanpercentile(s, 25))
+        plt.hlines(y=offset_0/1e8, xmin=line-linewidth/2, xmax=line+linewidth/2, color="magenta")
         
-    popt, pcov = scipy.optimize.curve_fit(ch4_model, ch4_wls, ch4_data)
-    ch4_pred = ch4_model(None, *popt)
-    subtracted = spectrum - ch4_pred
+        try:
+            popt, pcov = curve_fit(eval(lineshape), 
+                                   w, s, 
+                                   p0=     [A0,      line,                linewidth/2,    offset_0],
+                                   bounds=([0,       line - linewidth/2,  linewidth*0.2,  offset_0*0.9], 
+                                           [np.inf,  line + linewidth/2,  linewidth*2,    offset_0*1.1]),)
+            fits.append(popt)
+            plt.plot(w, eval(lineshape)(w, *popt)/1e8, color="magenta")
+
+        except (RuntimeError, ValueError) as e:
+            print(f"[eleos] Failed to fit CH4 line at {line:.3f} um: {e}")
+
+    # Set the offset to 0 for subtraction
+    for i in range(len(fits)):
+        fits[i][3] = 0
+
+    # Add all the lines together to make the final model
+    model = multifunc(wavelengths, eval(lineshape), fits)
+    subtracted = spectrum - model
+
+    # Restore original NaNs to the spectrum
+    subtracted[nanmask] = np.nan 
+
+    # Remove the massive central peak completely
+    subtracted[(wavelengths > centre_l) & (wavelengths < centre_r)] = np.nan
+    model[(wavelengths > centre_l) & (wavelengths < centre_r)] = np.nan
+    subtracted /= 1e8 
+    model /= 1e8
 
     if return_model:
-        return subtracted, popt, pcov, ch4_model
+        return subtracted, model
     else:
         return subtracted
 
@@ -431,7 +329,7 @@ def zonal_average_tiles(filepaths, lat_width, error_scale=1, rmsd_threshold=10, 
     a = 0
     # Iterate over each filepath to bin the spaxels by latitude
     for tile in filepaths:
-        print("Processing ", tile)
+        print("[eleos] Processing ", tile)
 
         # Get planetmapper Observation object
         obs = planetmapper.Observation(tile)
@@ -542,9 +440,7 @@ def get_single_spectra(file_pattern,
                        pct_error=0, 
                        num_points=None, 
                        min_wl=-999, 
-                       max_wl=999, 
-                       remove_nonlte=True, 
-                       **nonlte_kwargs):
+                       max_wl=999):
     """Get a single spectrum from multiple observations, with options to restrict emission angle, downsample, and restrict wavelength range. 
        Saves the output to a .spx file.
 
@@ -560,12 +456,10 @@ def get_single_spectra(file_pattern,
            num_points (int):     Number of points to downsample the spectrum to.
            min_wl (float):       Minimum wavelength in the spectrum.
            max_wl (float):       Maximum wavelength in the spectrum.
-           remove_nonlte (bool): Whether to remove non-LTE emission from the spectrum.
-           nonlte_kwargs:        Keyword arguments to pass to get_nonlte_emission_mask.
            
        Returns:
            np.ndarray: The wavelengths in the new .spx file
-           np.ndarray: The radiances in the new spx file (returns MJy/sr, writes uW/cm2/sr/um to the .spx file)
+           np.ndarray: The radiances in the new spx file (returns MJy/sr, writes W/cm2/sr/um to the .spx file)
            np.ndarray: The radiance error in the new spx file (same units as radiance)
     """
     
@@ -596,15 +490,10 @@ def get_single_spectra(file_pattern,
 
     w = wavelengths
     s = multiple_cube_average(cubes)
-    s, w = trim_spectra(s, w, min_wl=min_wl, max_wl=max_wl)
-
-    if remove_nonlte:
-        h3p_mask ,ch4_mask = get_nonlte_emission_mask(w, **nonlte_kwargs)
-        s = s[h3p_mask | ch4_mask]
-        w = w[h3p_mask | ch4_mask]
+    s, w = wavelength_select(s, w, min_wl=min_wl, max_wl=max_wl)
 
     if num_points is not None:
-        s, w = downsample_spectra(s, w, num_points=num_points)
+        s, w = downsample_spectrum(s, w, num_points=num_points)
 
     for name, values in other.items():
         other[name] = utils.nanaverage(values, weights)
@@ -620,6 +509,81 @@ def get_single_spectra(file_pattern,
                 **other)
     
     return w, s, err
+
+
+def combine_multiple_spectra(*spectra_units):
+    """
+    Combine multiple spectra with errors. Preserves original wavelength resolution in
+    non-overlapping regions and uses weighted average (inverse variance) in overlaps.
+    
+    Args:
+        *spectra_units: Tuples of (wavelength, spectrum, error), where each element is a 1D array.
+    
+    Returns:
+        wavelengths (np.array): Stitched wavelength grid
+        spectrum (np.array): Combined spectral values
+        error (np.array): Combined errors
+    """
+    segments = []
+    spectra = list(spectra_units)
+    spectra.sort(key=lambda t: t[0][0])  # Sort by wavelength start
+
+    for i, (wl_i, f_i, e_i) in enumerate(spectra):
+        wmin_i, wmax_i = wl_i.min(), wl_i.max()
+        overlapping_segments = []
+
+        for j, (wl_j, f_j, e_j) in enumerate(spectra):
+            if i == j:
+                continue
+            wmin_j, wmax_j = wl_j.min(), wl_j.max()
+
+            if wmax_j > wmin_i and wmin_j < wmax_i:
+                w_overlap_min = max(wmin_i, wmin_j)
+                w_overlap_max = min(wmax_i, wmax_j)
+
+                # Choose higher-res grid in overlap
+                res_i = np.median(np.diff(wl_i[(wl_i >= w_overlap_min) & (wl_i <= w_overlap_max)]))
+                res_j = np.median(np.diff(wl_j[(wl_j >= w_overlap_min) & (wl_j <= w_overlap_max)]))
+                grid = wl_i if res_i <= res_j else wl_j
+                wl_common = grid[(grid >= w_overlap_min) & (grid <= w_overlap_max)]
+
+                # Interpolate flux and error
+                fi = interp1d(wl_i, f_i, bounds_error=False, fill_value=np.nan)(wl_common)
+                fj = interp1d(wl_j, f_j, bounds_error=False, fill_value=np.nan)(wl_common)
+
+                ei = interp1d(wl_i, e_i, bounds_error=False, fill_value=np.nan)(wl_common)
+                ej = interp1d(wl_j, e_j, bounds_error=False, fill_value=np.nan)(wl_common)
+
+                # Inverse-variance weighted average
+                with np.errstate(divide='ignore', invalid='ignore'):
+                    wi = 1 / (ei**2)
+                    wj = 1 / (ej**2)
+                    weights_sum = wi + wj
+
+                    flux_comb = np.nansum([wi * fi, wj * fj], axis=0) / weights_sum
+                    error_comb = np.sqrt(1 / weights_sum)
+
+                overlapping_segments.append((wl_common, flux_comb, error_comb))
+
+        # Remove overlap from i-th spectrum
+        mask = np.full(wl_i.shape, True)
+        for wl_o, _, _ in overlapping_segments:
+            mask &= ~((wl_i >= wl_o.min()) & (wl_i <= wl_o.max()))
+
+        # Add unique portion
+        if np.any(mask):
+            segments.append((wl_i[mask], f_i[mask], e_i[mask]))
+
+        # Add overlapping portions
+        segments.extend(overlapping_segments)
+
+    # Stitch all segments together
+    all_wl = np.concatenate([seg[0] for seg in segments])
+    all_flux = np.concatenate([seg[1] for seg in segments])
+    all_err = np.concatenate([seg[2] for seg in segments])
+
+    idx = np.argsort(all_wl)
+    return all_wl[idx], all_flux[idx], all_err[idx]
 
 
 def quickview(wavelength, spectrum, errors=None, log=True, block=True):

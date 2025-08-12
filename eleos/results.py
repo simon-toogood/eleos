@@ -16,6 +16,7 @@ from . import utils
 from . import cores
 from . import constants
 from . import parsers
+from . import shapes
 
 
 def plotting(func):
@@ -59,6 +60,7 @@ class NemesisResult:
         latitude (float):                       Latitude of the observed spectrum
         longitude (float):                      Longitude of the observed spectrum
         chi_sq (float):                         The chi-squared value of the retrieval
+        elapsed_time (float):                   The time taken for the retrieval in decimal hours
         retrieved_spectrum (pandas.DataFrame):  A DataFrame containing the measured and modelled spectrum
         retrieved_aerosols (pandas.DataFrame):  A DataFrame containing the retrieved aerosol profiles
         retrieved_gases (pandas.DataFrame):     A DataFrame containing the retrieved chemical profiles
@@ -101,6 +103,9 @@ class NemesisResult:
 
     def _add_results_to_profiles(self):
         for label, profile in self.profiles.items():
+            if isinstance(profile.shape, shapes.Shape0):
+                print("Warning, Shape0 is not fully supported (from NemesisResult._add_results_to_profiles)")
+                continue
             if isinstance(profile, profiles.AerosolProfile) and profile.retrieve_optical:
                 profile._add_result(self.mre.retrieved_parameters.pop(0),
                                     self.mre.retrieved_parameters.pop(0))
