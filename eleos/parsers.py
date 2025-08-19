@@ -18,7 +18,7 @@ from . import shapes
 
 
 ## TODO: Move all parsing routines here, .itr, .prc etc...
-## I also want to be ablet o completely reconstruct the core object from these files so no pickling of NemesisCore needed
+## I also want to be able to completely reconstruct the core object from these files so no pickling of NemesisCore needed, but thats a little way off
 
 
 class Parser:
@@ -591,6 +591,13 @@ class kTable(Parser):
             self.ktable = ktable_flat.reshape((self.npoint, self.np_, self.nt, self.ng))
 
 
+class PsgSpectrum(Parser):
+    def read(self):
+        self.data = pd.read_csv(self.filepath, comment="#", header=None, sep="\s+")
+        self.data.columns = ["wavelength", "spectrum", "drop"]
+        self.data.drop(["drop"], axis=1, inplace=True)
+
+
 class NemesisCov(Parser):
     """Parser for nemesis.cov
     
@@ -598,6 +605,7 @@ class NemesisCov(Parser):
         cov (np.ndarray): Covariance matrix of the retrieved parameters"""
     
     def read(self):
+        raise NotImplementedError("This parser is not finished. Suppress this error at your peril")
         with open(self.filepath, 'r') as f:
             lines = f.readlines()
 

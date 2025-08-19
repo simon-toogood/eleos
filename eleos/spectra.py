@@ -3,7 +3,6 @@ import pandas as pd
 import glob
 import h3ppy
 import planetmapper
-import scipy
 import copy
 from astropy.io import fits
 from collections import defaultdict
@@ -19,11 +18,11 @@ from . import constants
 
 def margin_trim(cube, margin_size=3):
     """
-    Set the outer spaxels of a cube to NaN.
+    Set the outer rings of spaxels in a cube to NaN.
 
     Args:
         cube (np.ndarray): The spectral cube to trim with shape (wavelengths, x, y).
-        margin_size (int): The size of the margin to trim from each edge.
+        margin_size (int): The size of the margin to trim from each edge (eg. 2 will set every spaxel within 2 spaxels of the edge to NaN).
 
     Returns:
         np.ndarray: The trimmed spectral cube with NaN values in the margins.
@@ -90,7 +89,36 @@ def downsample_spectrum(wavelengths, spectrum, errors=None, num_points=100, spec
     return wavelengths[final_indices], spectrum[final_indices]
 
 
-def wavelength_select(wavelengths, spectrum, errors=None, min_wl=None, max_wl=None):
+def resample_to_new(wavelength_source, spectrum_source, wavelength_target, kind="linear", fill_value="extrapolate"):
+    """Resample a spectrum onto a new wavelength grid via interpolation.
+
+    Args:
+        wavelength_source (array-like): Original wavelength values of the spectrum (must be sorted).
+        spectrum_source (array-like): Spectrum values corresponding to `wavelength_source`.
+        wavelength_target (array-like): Target wavelength grid to resample onto.
+        kind (str, optional): Interpolation type. Options include 
+            "linear", "nearest", "cubic", etc. Defaults to "linear".
+        fill_value (str or float, optional): Value to use outside the range of 
+            `wavelength_source`. If "extrapolate", allows extrapolation. Defaults to "extrapolate".
+
+    Returns:
+        np.ndarray: Spectrum values resampled onto the `wavelength_target` grid.
+
+
+    """
+    wavelength_source = np.asarray(wavelength_source)
+    spectrum_source = np.asarray(spectrum_source)
+    wavelength_target = np.asarray(wavelength_target)
+
+    if len(wavelength_source) != len(spectrum_source):
+        raise ValueError("wavelength_source and spectrum_source must have the same length.")
+
+    interp_func = interp1d(wavelength_source, spectrum_source, kind=kind,
+                           fill_value=fill_value, bounds_error=False)
+    return interp_func(wavelength_target)
+
+
+def wavelength_select(wavelengths, spectrum, errors=None, min_wl=None, max_wl=None, epsilon=0):
     """Select a range of wavelengths from a spectrum.
     
     Args:
@@ -99,6 +127,7 @@ def wavelength_select(wavelengths, spectrum, errors=None, min_wl=None, max_wl=No
         errors (np.ndarray):      The error on the spectral data (optional)
         min_wl (float):           The minimum wavelength to select
         max_wl (float):           The maximum wavelength to select
+        epsilon (float):          A small fudge factor to the end of the mask to fix FPE when grouping spectra
         
     Returns:
         wavelengths (np.ndarray): The trimmed wavelengths
@@ -110,7 +139,7 @@ def wavelength_select(wavelengths, spectrum, errors=None, min_wl=None, max_wl=No
     if min_wl is not None:
         mask &= wavelengths >= min_wl
     if max_wl is not None:
-        mask &= wavelengths <= max_wl
+        mask &= wavelengths <= max_wl + epsilon
 
     if errors is not None:
         return wavelengths[mask], spectrum[mask], errors[mask]
@@ -144,10 +173,11 @@ def subtract_h3p(wavelengths, spectrum, latitude=-60, region=(3.525, 3.55), retu
     """Subtract H3+ emission from a spectrum
 
     Args:  
-        wavelengths (np.ndarray):    Wavelength grid
-        spectrum (np.ndarray):       Measured spectrum in units of W/cm2/sr/um
-        region (float, float):       The region to use to fit the H3+ model (by default this is a triple of bright lines)
-        return_model (bool):         If True, then return the h3p object used for the fit
+        wavelengths (np.ndarray): Wavelength grid
+        spectrum (np.ndarray):    Measured spectrum in units of W/cm2/sr/um
+        latitude (float):         Optionally specify a latitude to make a more informed guess at initial values
+        region (float, float):    The region to use to fit the H3+ model (by default this is a triple of bright lines)
+        return_model (bool):      If True, then return the h3p object used for the fit
     
     Returns:
         np.ndarray: Spectrum with H3+ subtracted in units of W/cm2/sr/um
@@ -156,7 +186,7 @@ def subtract_h3p(wavelengths, spectrum, latitude=-60, region=(3.525, 3.55), retu
     def remap(x, in_min, in_max, out_min, out_max):
         return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
 
-    temp = remap(np.abs(latitude), 40, 90, 500, 1600)
+    temp = remap(np.abs(latitude), 40, 90, 500, 1000)
     density = remap(np.abs(latitude), 40, 90, 1e18, 1e19)
 
     h3p_kwargs.setdefault("temperature", temp)
@@ -173,9 +203,10 @@ def subtract_h3p(wavelengths, spectrum, latitude=-60, region=(3.525, 3.55), retu
     # h3p.guess_density()
     fit = h3p.fit(verbose=False)
     h3p.set(wave=wavelengths)
-    h3p.print_vars()
+    plt.plot(wavelengths, h3p.model() / 10000)
     h3p_pred = h3p.model(background_0=0)
-    
+    plt.plot(wavelengths, h3p.model(background_0=0) / 10000)
+
     subtracted = (spectrum - h3p_pred) / 10000  # Convert back to W/cm2/sr/um
     subtracted[nanmask] = np.nan  # Restore NaNs where they were in the original spectrum
     subtracted[subtracted < 0] = np.nan  # Remove any negative values
@@ -201,12 +232,39 @@ def subtract_ch4(wavelengths, spectrum, nlines=25, linewidth=0.008, A0=1e-6, lin
         np.ndarray: The spectrum with CH4 subtracted in units of W/cm2/sr/um
     """
 
+    raise NotImplementedError("CH4 subtraction is dodgy at best. Catch this error if you are sure you want to try")
+
     def multifunc(x, func, p0s):
         total = np.zeros_like(x)
         for p in p0s:
             total += func(x, *p)
         return total 
     
+    def fit(wavelengths, spectrum, line, linewidth, c="magenta"):
+        if not np.nanmin(wavelengths) < line < np.nanmax(wavelengths):
+            print("fail")
+            return
+        
+        w, s = wavelength_select(wavelengths, 
+                                 spectrum, 
+                                 min_wl=line - linewidth/1.5, 
+                                 max_wl=line + linewidth/1.5)
+        offset_0 = np.nanmedian(np.nanpercentile(s, 25))
+        plt.hlines(y=offset_0/1e8, xmin=line-linewidth/2, xmax=line+linewidth/2, color=c)
+        
+        try:
+            popt, pcov = curve_fit(eval("utils."+lineshape), 
+                                   w, s, 
+                                   p0=     [A0,      line,                linewidth/2,    offset_0],
+                                   bounds=([0,       line - linewidth/2,  linewidth*0.2,  offset_0*0.9], 
+                                           [np.inf,  line + linewidth/2,  linewidth*2,    offset_0*1.1]),)
+            plt.plot(w, eval("utils."+lineshape)(w, *popt)/1e8, color=c)
+            return popt
+
+        except (RuntimeError, ValueError) as e:
+            print(f"[eleos] Failed to fit CH4 line at {line:.3f} um: {e}")
+
+
     nanmask = np.isnan(spectrum)
     spectrum = interpolate_nans(wavelengths, spectrum) # linearly interpolate nans
     spectrum *= 1e8 # numerical stability
@@ -227,26 +285,20 @@ def subtract_ch4(wavelengths, spectrum, nlines=25, linewidth=0.008, A0=1e-6, lin
     # Fit each of those lines
     fits = []
     for line in lines:
-        if not np.nanmin(wavelengths) < line < np.nanmax(wavelengths):
+        popt = fit(wavelengths, spectrum, line, linewidth)
+        if popt is None:
             continue
-        w, s = wavelength_select(wavelengths, 
-                                 spectrum, 
-                                 min_wl=line - linewidth, 
-                                 max_wl=line + linewidth)
-        offset_0 = np.nanmedian(np.nanpercentile(s, 25))
-        plt.hlines(y=offset_0/1e8, xmin=line-linewidth/2, xmax=line+linewidth/2, color="magenta")
-        
-        try:
-            popt, pcov = curve_fit(eval("utils."+lineshape), 
-                                   w, s, 
-                                   p0=     [A0,      line,                linewidth/2,    offset_0],
-                                   bounds=([0,       line - linewidth/2,  linewidth*0.2,  offset_0*0.9], 
-                                           [np.inf,  line + linewidth/2,  linewidth*2,    offset_0*1.1]),)
-            fits.append(popt)
-            plt.plot(w, eval("utils."+lineshape)(w, *popt)/1e8, color="magenta")
+        fits.append(popt)
 
-        except (RuntimeError, ValueError) as e:
-            print(f"[eleos] Failed to fit CH4 line at {line:.3f} um: {e}")
+    # Now fit the extra lines that are too weak to be captured in the line list
+    # probably not a good idea!
+    # if extra_lines:
+    #     extralines = [3.478, 3.491, 3.504, 3.517, 3.166, 3.157, 3.149, 3.142, 3.133, 3.124]
+    #     for line in extralines:
+    #         popt = fit(wavelengths, spectrum, line, linewidth, c="green")
+    #         if popt is None:
+    #             continue
+    #         fits.append(popt)
 
     # Set the offset to 0 for subtraction
     for i in range(len(fits)):
@@ -272,7 +324,7 @@ def subtract_ch4(wavelengths, spectrum, nlines=25, linewidth=0.008, A0=1e-6, lin
 
 
 def zonal_average_tiles(filepaths, lat_width, error_scale=1, rmsd_threshold=10, filters=None):
-    """Get the zonal average from a set of JWST navigated cubes.
+    """Get the zonal averages from a set of JWST navigated cubes.
     
     Args:
         filepaths (List(str)): List of filepaths to tiles to use in the averaging
@@ -280,7 +332,7 @@ def zonal_average_tiles(filepaths, lat_width, error_scale=1, rmsd_threshold=10, 
         error_scale (float):   Multiply the average error by this amount (unused so far)
         rmsd_threshold (int):  Reject any spaxels that are in the top x percentile for root-mean-square deviation from the median
         filters (dict):        Apply any filters to remove spaxels before averaging. Format is key=planetmapper backplane name (str)
-                            and value=(min, max). For example, 'EMISSION':(0, 70) will reject any spaxels with emission angle greater than 70
+                               and value=(min, max). For example, filters={'EMISSION':(0, 70)} will reject any spaxels with emission angle greater than 70
                             
     Returns:
         np.ndarray:       Wavelength grid, temporary - will be added to df later
@@ -479,7 +531,7 @@ def get_single_spectra(file_pattern,
 
     w = wavelengths
     s = multiple_cube_average(cubes)
-    s, w = wavelength_select(s, w, min_wl=min_wl, max_wl=max_wl)
+    s, w = wavelength_select(w, s, min_wl=min_wl, max_wl=max_wl)
 
     if num_points is not None:
         s, w = downsample_spectrum(s, w, num_points=num_points)
@@ -575,15 +627,18 @@ def combine_multiple_spectra(*spectra_units):
     return all_wl[idx], all_flux[idx], all_err[idx]
 
 
-def convolve_gaussian(data, wavelength, R, lambda0):
+def convolve_gaussian(wavelength, data, R, lambda0):
     """Convolve a spectrum with a Gaussian, assuming constant R. In reality resolution varies as a function of wavelength and
     depends on the filters used (for JWST/NIRSpec see https://jwst-docs.stsci.edu/jwst-near-infrared-spectrograph/nirspec-instrumentation/nirspec-dispersers-and-filters)
     
     Args:
-        data (np.ndarray):       The data to be convolved.
         wavelength (np.ndarray): Wavelength array (same length as data).
+
+        
+                        data (np.ndarray):       The data to be convolved.
         R (float):               Resolving power of the instrument
         lambda0 (float):         The wavelength at which R is defined. For G395H this is ~4um. For G235H this is ~2.4um.
+    
     Returns:
         np.ndarray: The convolved data.
     """

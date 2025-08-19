@@ -172,6 +172,15 @@ class NemesisResult:
 
     @plotting
     def plot_chisq(self, ax):
+        """Plot the chi-squared values as a function of iteration number
+        
+        Args:
+            ax: The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes
+
+        Returns:
+            matplotlib.Figure: The Figure object to which the Axes belong
+            matplotlib.Axes: The Axes object onto which the data was plotted
+        """
         if self.core.forward:
             ax.scatter(0, self.chi_sq)
         else:
@@ -181,19 +190,22 @@ class NemesisResult:
         ax.set_ylabel("$\chi^2$")
 
     @plotting
-    def plot_spectrum(self, ax, show_chisq=True, legend=True):
+    def plot_spectrum(self, ax, show_chisq=True, legend=True, log=True):
         """Plot the measured and model spectrum on a matplotlib Axes.
         
         Args:
             ax: The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes
             show_chisq (bool): Whether to display the chi-squared value of the fit
             legend (bool): Whether to draw the legend
+            log (bool): Whether to use a log plot
 
         Returns:
             matplotlib.Figure: The Figure object to which the Axes belong
             matplotlib.Axes: The Axes object onto which the data was plotted"""
     
-        ax.set_yscale("log")
+        if log:
+            ax.set_yscale("log")
+
         ax.plot(self.retrieved_spectrum.wavelength, self.retrieved_spectrum.measured, lw=0.5, label="Measured" if legend else None)
         ax.fill_between(self.retrieved_spectrum.wavelength, self.retrieved_spectrum.measured-self.retrieved_spectrum.error, self.retrieved_spectrum.measured+self.retrieved_spectrum.error, alpha=0.5)
 
@@ -212,6 +224,17 @@ class NemesisResult:
 
     @plotting
     def plot_spectrum_residuals(self, ax):
+        """Plot the log spectrum residuals on a matplotlib Axes.
+        
+        Args:
+            ax: The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes
+            show_chisq (bool): Whether to display the chi-squared value of the fit
+            legend (bool): Whether to draw the legend
+
+        Returns:
+            matplotlib.Figure: The Figure object to which the Axes belong
+            matplotlib.Axes: The Axes object onto which the data was plotted"""
+        
         residuals = np.log(self.retrieved_spectrum.model) - np.log(self.retrieved_spectrum.measured)
 
         ax.plot(self.retrieved_spectrum.wavelength, residuals, label="Residuals", lw=1)
@@ -494,6 +517,11 @@ class SensitivityAnalysis:
     """
 
     def __init__(self, parent_directory):
+        """
+        Args:
+            parent_directory (str): The directory containing all the individual cores
+            
+        """
         self.parent_directory = Path(parent_directory)
         self.results = load_multiple_cores(parent_directory)
         self.baseline = self.results[0]
@@ -633,7 +661,9 @@ def load_best_cores(parent_directory, n, raise_errors=True):
         n (int): The number of cores to load
     
     Returns:
-        list[NemesisResult]: A list containing the result object for each core, sorted by chi-squared value (so lowest chi-sqared is index 0 in the list)"""
+        list[NemesisResult]: A list containing the result object for each core, sorted by chi-squared value (so lowest chi-sqared is index 0 in the list)
+    """
+    
     parent_directory = Path(parent_directory)
 
     dirs = [""]

@@ -36,8 +36,8 @@ class NemesisCore:
         profiles (dict):              A dictionary of profiles.Profile objects to retrieve, where the keys are the profile labels and the values are the Profile objects themselves
         spx_file (Path):              The path to the spectrum file to fit
         ref_file (Path):              The path to the ref file to use
-        cia_file (Path):              The path to the collision-induced absorbtion file to use (default: mgRT_mgRV_40-400K_dnu4.0.tab, warning: assumes d nu = 4.0)
-        sol_file (Path):              The path to the solar spectrum file to use (default: solar_spectrum.dat)
+        cia_file (Path):              The path to the collision-induced absorbtion file to use (default: mgRT_mgRV_40-400K_dnu4.0.tab, warning: always assumes d nu = 4.0)
+        sol_file (Path):              The path to the solar spectrum file to use (default: solar_spec.dat)
         ref (parsers.NemesisRef):     The parsed ref file
         planet (str):                 The name of the planet being observed
         scattering (bool):            Whether to run a scattering retrieval or not
@@ -57,6 +57,7 @@ class NemesisCore:
         cloud_cover (bool):           If scattering mode is on, then this is the fractional cloud cover between 0 and 1 (usually doesn't need to be changed)
         reference_wavelength (float): If scattering mode is on, then normalise the cross-sections at the closest wavelength to this value in the .xsc file
         """
+    
     def __init__(self, 
                  parent_directory,
                  spx_file, 

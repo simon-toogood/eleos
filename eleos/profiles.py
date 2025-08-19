@@ -18,7 +18,7 @@ from . import spx
 
 class Profile:
     def __init__(self, label=None):
-        """This is the base class for all Profile objects. It should never be instantiated directly, use a subclass such as ``GasProfile`` or ``TemperatureProfile``"""
+        """This is the base class for all Profile objects. It should never be instantiated directly, use a subclass such as ``GasProfile`` or ``AerosolProfile``"""
         self.retrieved = False
         self.core = None
         self.label = label
@@ -143,7 +143,7 @@ class TemperatureProfile(Profile):
             filepath: The filepath of the prior temperature profile
             label (str): A label to associate with this Profile. By default it is "Temperature"
         """
-        raise NotImplementedError("Temperature profiles are not fully implemented yet")
+        raise NotImplementedError("Temperature profiles are not fully implemented yet. Catch this error at your peril")
         super().__init__(label)
         if self.label is None:
             self.label = "Temperature"
@@ -303,14 +303,16 @@ class AerosolProfile(Profile):
         Constant refractive index over range (not retrieved):
         AerosolProfile(shape, radius, variance, real_n, imag_n)
 
-        Constant refractive index over range (retrieved):
+        Constant refractive index over range (retrieved; ie with an attached 444):
         AerosolProfile(shape, radius, radius_error, variance, variance_error, real_n, imag_n, imag_n_error)
 
         Use refractive index from lookup table (not retrieved):
         AerosolProfile(shape, radius, variance, n_lookup)
 
-        Use refractive index from lookup table (retrieved):
+        Use refractive index from lookup table (retrieved; ie with an attached 444):
         AerosolProfile(shape, radius, radius_error, variance, variance_error, n_lookup)
+
+        Currently you cannot specify an arbitrary list of refractive index points to use, but this will be added!
         
         Args:
             shape (Shape): A Shape object to use for the profile shape

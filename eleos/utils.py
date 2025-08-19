@@ -19,6 +19,7 @@ def lorentzian(x, A, mu, fwhm, offset):
 
 
 def voigt(x, A, mu, fwhm, offset):
+    # Not sure this is *actually* a voigt profile...
     sigma = fwhm / 2.35482
     return A * np.exp(-((x - mu)**2) / (2 * sigma**2)) / (1 + ((x - mu) / (fwhm / 2))**2) + offset
 
@@ -59,6 +60,18 @@ def nanaverage(data, weights=None, **kwargs):
 # Matplotlib extension functions
 
 def label_axes(axs, labels="abcdefghijklmnopqrstuvwxyz", append=")", loc=(0.01,0.01), **kwargs):
+    """Take a list of mpl Axes and add alhpabetic labels to them.
+    
+    Args:
+        axs (mpl.Axes):            The axes to label
+        labels (Iterable):         The labels to use (default is lowercase alphabet)
+        append (str):              What to put after the label. default is ')' for a final label of eg. 'a)'
+        log (Tuple[float, float]): The location of the label in Axes coordinates
+        **kwargs:                  Additional arguments passed to ax.text()
+    
+    Returns:
+        None
+    """
     if isinstance(axs, dict):
         ax = np.array(list(axs.values()))
         labels = list(axs.keys())
