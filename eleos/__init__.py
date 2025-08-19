@@ -1,10 +1,40 @@
-"""Reading from __init__.py"""
+"""
+Eleos: A utility library for working with planetary spectra and gneerating NEMESIS radiative transfer cores.
 
-from .constants import *
-from .cores import *
-from .parsers import *
-from .profiles import *
-from .results import *
-from .shapes import *
-from .spectra import *
-from .utils import *
+Modules available directly under `eleos`:
+- constants
+- cores
+- parsers
+- profiles
+- results
+- shapes
+- spectra
+- spx
+- utils
+"""
+
+# Explicitly declare the public API
+__all__ = [
+    "constants",
+    "cores",
+    "parsers",
+    "profiles",
+    "results",
+    "shapes",
+    "spectra",
+    "spx",
+    "utils",
+]
+
+# Import submodules into package namespace
+from . import (
+    constants,
+    cores,
+    parsers,
+    profiles,
+    results,
+    shapes,
+    spectra,
+    spx,
+    utils,
+)

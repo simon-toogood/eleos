@@ -329,17 +329,17 @@ class NemesisSpx(Parser):
         See also: `NemesisSpx.get_angles()`
 
         Args:
-        wavelengths (list or array-like): Wavelength values of the observation.
-        spectrum (list or array-like): Measured spectral radiance/reflectance values in units of MJy/sr or W/cm2/sr/um (see `convert`).
-        error (list or array-like): Measurement uncertainties for each spectral point.
-        lat (float): Latitude of the observation point (degrees).
-        lon (float): Longitude of the observation point (degrees).
-        phase (float): Phase angle between the observer, target, and light source (degrees).
-        emission (float): Emission angle of the observation (degrees).
-        azimuth (float): Azimuth angle (degrees).
-        fwhm (float, optional): Full width at half maximum of the spectral resolution. Defaults to 0.
-        convert (bool, optional): If True, converts the input values from MJy/sr to W/cm2/sr/um.
-                                  Defaults to False.
+            wavelengths (list or array-like): Wavelength values of the observation.
+            spectrum (list or array-like): Measured spectral radiance/reflectance values in units of MJy/sr or W/cm2/sr/um (see `convert`).
+            error (list or array-like): Measurement uncertainties for each spectral point.
+            lat (float): Latitude of the observation point (degrees).
+            lon (float): Longitude of the observation point (degrees).
+            phase (float): Phase angle between the observer, target, and light source (degrees).
+            emission (float): Emission angle of the observation (degrees).
+            azimuth (float): Azimuth angle (degrees).
+            fwhm (float, optional): Full width at half maximum of the spectral resolution. Defaults to 0.
+            convert (bool, optional): If True, converts the input values from MJy/sr to W/cm2/sr/um.
+                                    Defaults to False.
 
         Returns:
             NemesisSpx: A new instance populated with the given spectral and geometric data.
@@ -366,6 +366,9 @@ class NemesisSpx(Parser):
     def get_angles(self):
         """
         Retrieve the geometric parameters of the observation. useful for creating modified versions of the same spectrum (see `NemesisSpx.from_lists()`)
+
+        Args:
+            None
 
         Returns:
             dict: Dictionary containing:

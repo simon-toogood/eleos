@@ -1080,7 +1080,7 @@ class NemesisCore:
     
 
 class FixedPeak:
-    """Used internally to specify if any spectral regions should be fixed so that NEMESIS always fits it there. Don't instantiate, instead use NemesisCore.fix_peak"""
+    """Used internally to specify if any spectral regions should be fixed so that NEMESIS always fits it there. Don't instantiate, instead use :meth:`~eleos.cores.NemesisCore.fix_peak`"""
     def __init__(self, central_wavelength, width, error):
         self.central_wavelength = central_wavelength
         self.width = width
@@ -1090,10 +1090,16 @@ class FixedPeak:
         return f"<FixedPeak at {self.central_wavelength}±{self.width/2:.4f}um>"
 
     def isin(self, wl):
+        """Check whether a specific wavelength is within the region.
+        
+        Args:
+            wl (float): The wavelength to check
+        """
         return (wl > self.central_wavelength - self.width/2) & (wl < self.central_wavelength + self.width/2)
     
 
 def add_to_raddata(filepath):
+    """Copy a file into the local raddata/ directory. Useful for choosing arbitrary solar spectrum files for example."""
     return shutil.copy(filepath, constants.NEMESIS_PATH / "radtrancode/raddata")
 
 
