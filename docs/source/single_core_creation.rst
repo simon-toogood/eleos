@@ -1,7 +1,7 @@
 Generating a single NEMESIS Core
 ********************************
 
-In ``eleos``, each NEMESIS core is represented by a single :class:`eleos.cores.NemesisCore` object. The :class:`eleos.cores.NemesisCore` object contains all the information rewured to generate a core - for example, paths to the .ref and .spx files to use, number of iterations, scattering toggle, among others. 
+In ``eleos``, each NEMESIS core is represented by a single :class:`eleos.cores.NemesisCore` object. The :class:`eleos.cores.NemesisCore` object contains all the information required to generate a core - for example, paths to the .ref and .spx files to use, number of iterations, scattering toggle, among others. 
 
 In order to add a retrieved profile to the core, we can instantiate one of the subclasses of :class:`eleos.profiles.Profile`. There is currently support for two types of profiles; gas composition profiles (:class:`eleos.profiles.GasProfile`) and aerosol density profiles (:class:`eleos.profiles.AerosolProfile`), as well as very limited support for temperature profiles (:class:`eleos.profiles.TemperatureProfile`), though this is disabled by default.
 

@@ -1,10 +1,3 @@
-import sys
-from pathlib import Path
-import subprocess
-
-from . import results
-
-
 """Call signatures:
 
 python -m eleos <core_directory> --make_summary
@@ -16,7 +9,7 @@ each parameter has on the spectrum
 
 You can append "--run-if-finished" to any command and this will run it only if
 all the cores in the parent_directory specified This is done by checking
-for the existance of "Done!" in the slurm output for each core.
+for the existence of "Done!" in the slurm output for each core.
 
 General command format:
        python -m eleos [DIRECTORY] [COMMAND] [RUN IF FINISHED] 
@@ -24,11 +17,21 @@ argv:          0             1          2            3
 
 """
 
+import sys
+from pathlib import Path
+import subprocess
+
+from . import results
+
+
 
 def exit_msg(msg="Not all cores have finished running!"):
     print(msg)
     exit()
 
+if len(sys.argv) == 1 or "-h" in sys.argv or "--help" in sys.argv:
+    print(__doc__)
+    quit()
 
 if sys.argv[-1] == "--run-if-finished":
     to_check = Path(sys.argv[1])

@@ -4,8 +4,9 @@ Welcome to Eleos's documentation!
 
 .. toctree::
    :maxdepth: 2
-   :caption: Examples
+   :caption: Getting Started
 
+   installation
    single_core_examples
    multiple_core_examples
 
