@@ -191,7 +191,7 @@ def subtract_h3p(wavelengths, spectrum, latitude=-60, region=(3.525, 3.55), retu
 
     h3p_kwargs.setdefault("temperature", temp)
     h3p_kwargs.setdefault("density", density)
-    h3p_kwargs.setdefault("R", 1700)
+    h3p_kwargs.setdefault("R", 2700)
 
     spectrum = copy.deepcopy(spectrum) * 10000 # Convert to W/m2/sr/um
     nanmask = np.isnan(spectrum)
@@ -203,9 +203,7 @@ def subtract_h3p(wavelengths, spectrum, latitude=-60, region=(3.525, 3.55), retu
     # h3p.guess_density()
     fit = h3p.fit(verbose=False)
     h3p.set(wave=wavelengths)
-    plt.plot(wavelengths, h3p.model() / 10000)
     h3p_pred = h3p.model(background_0=0)
-    plt.plot(wavelengths, h3p.model(background_0=0) / 10000)
 
     subtracted = (spectrum - h3p_pred) / 10000  # Convert back to W/cm2/sr/um
     subtracted[nanmask] = np.nan  # Restore NaNs where they were in the original spectrum
