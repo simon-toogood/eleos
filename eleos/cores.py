@@ -461,7 +461,7 @@ class NemesisCore:
         num_entries = len(spx_data.wavelengths)
 
         if num_entries > 2048:
-            raise IndexError(f"spx file has too many wavelengths! ({num_entries}/2048)")
+            warnings.warn(IndexError(f"spx file has too many wavelengths for default NEMESSI installation ({num_entries}/2048) - have you increased IDIM in arrdef.f?"))
         
         with open(self.directory / "fmerror.dat", mode="w+") as file:
             # Header with number of lines 
