@@ -1,74 +1,73 @@
-"""Call signatures:
-
-python -m eleos <core_directory> --make_summary
-Print the summary tables and generate summary and iteration plots for the given core
-
-python -m eleos <parent_directory> --make-sensitivity-summary 
-For a directory containing a sensitivity analysis, create a plot showing the effect changing
-each parameter has on the spectrum
-
-You can append "--run-if-finished" to any command and this will run it only if
-all the cores in the parent_directory specified This is done by checking
-for the existence of "Done!" in the slurm output for each core.
-
-General command format:
-       python -m eleos [DIRECTORY] [COMMAND] [RUN IF FINISHED] 
-argv:          0             1          2            3
-
-"""
-
-import sys
-from pathlib import Path
+import argparse
 import subprocess
+from pathlib import Path
 
 from . import results
-
 
 
 def exit_msg(msg="Not all cores have finished running!"):
     print(msg)
     exit()
 
-if len(sys.argv) == 1 or "-h" in sys.argv or "--help" in sys.argv:
-    print(__doc__)
-    quit()
 
-if sys.argv[-1] == "--run-if-finished":
-    to_check = Path(sys.argv[1])
-
-    # Pick a file present in all cores whether finished, running or not run yet
-    for core in to_check.glob("**/nemesis.apr"):
+def check_all_finished(directory):
+    for core in directory.glob("**/nemesis.apr"):
         try:
             slurm = tuple((core / "..").resolve().glob("*slurm*.out"))[0]
             if "Done!" not in open(slurm).read():
                 exit_msg()
         except IndexError:
             exit_msg()
-    
-    # If we haven't exited yet, all cores must have run.
-    # There could be some weird race condition here when multiple cores finish at exactly the
-    # but I'm choosing to ignore that and hope it's not a problem
-    print(f"All cores have run! Running command...")
-    subprocess.run(f"python -m eleos {to_check.resolve()} {sys.argv[2]}", shell=True)
-    exit()
+    print("All cores have run! Running command...")
 
 
-if sys.argv[2] == "--make-summary":
-    res = results.NemesisResult(sys.argv[1])
-    res.print_summary()
-    res.make_summary_plot()
+def make_summary(core_dir, log=False, silent=False):
+    res = results.NemesisResult(core_dir)
+    if not silent:
+        res.print_summary()
+    res.make_summary_plot(log=log)
     if not res.core.forward:
         res.make_iterations_plot()
     print("Done!")
 
-elif sys.argv[2] == "--make-sensitivity-summary":
-    sens = results.SensitivityAnalysis(sys.argv[1])
+
+def make_sensitivity_summary(parent_dir):
+    sens = results.SensitivityAnalysis(parent_dir)
     sens.make_parameters_plot()
     sens.savefig("sensitivity.png", dpi=400)
-    print("Done!") 
+    print("Done!")
+
+
+parser = argparse.ArgumentParser(
+    description="Run eleos analysis commands."
+)
+subparsers = parser.add_subparsers(dest="command", required=True)
+
+# make-summary command
+summary_parser = subparsers.add_parser("make-summary", help="Print summary tables and generate plots for a core")
+summary_parser.add_argument("directory",         help="Path to a core directory",)
+summary_parser.add_argument("--run-if-finished", help="Run only if all cores in directory are finished",       action="store_true",)
+summary_parser.add_argument("--log-spectrum",    help="Whether to plot the spectrum/residuals on a log scale", action="store_true",)
+summary_parser.add_argument("--silent",          help="Whether to print a table of the priors/fitted parameters", action="store_true",)
+
+# make-sensitivity-summary command
+sens_parser = subparsers.add_parser("make-sensitivity-summary", help="Create a plot showing effect of changing parameters on the spectrum")
+sens_parser.add_argument("directory",         help="Path to a parent directory containing sensitivity analysis",)
+sens_parser.add_argument("--run-if-finished", help="Run only if all cores in directory are finished", action="store_true")
+
+
+args = parser.parse_args()
+directory = Path(args.directory)
+
+if args.run_if_finished:
+    check_all_finished(directory)
+
+if args.command == "make-summary":
+    make_summary(directory, log=args.log_spectrum, silent=args.silent)
+
+elif args.command == "make-sensitivity-summary":
+    make_sensitivity_summary(directory)
 
 else:
-    raise ValueError("Argument not recognised!")
-    
-
+    parser.error("Command not recognised!")
 

@@ -128,7 +128,7 @@ class NemesisMre(Parser):
                 df.drop(["i", "ix"], axis=1, inplace=True)
                 self.initial_state_vector += list(df.prior)
                 self.retrieved_parameters.append(df)
-
+        
 
 class NemesisXsc(Parser):
     """Parser for the nemesis.xsc file
@@ -516,6 +516,21 @@ class AerosolPrf(Parser):
             if names == [""]:
                 return
             self.data.columns = ["height"] + names
+
+
+class ParaH2Ref(Parser):
+    """Parser for the parah2.ref file
+    
+    Attributes:
+        data: pd.DataFrame containing the aerosol density as a function of height. The units of aerosol density are particles per gram of atmosphere"""
+    
+    def __init__(self, filepath):
+        super().__init__(filepath)
+
+    def read(self):
+        self.data = pd.read_table(self.filepath, sep="\s+", skiprows=1, header=None)
+        header = ["height", "parah2_fraction"]
+        self.data.columns = header
 
 
 class kTable(Parser):

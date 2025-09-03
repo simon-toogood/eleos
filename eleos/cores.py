@@ -73,7 +73,7 @@ class NemesisCore:
                  min_pressure=None,
                  max_pressure=None,
                  instrument_ktables="NIRSPEC", 
-                 fmerror_factor=0,
+                 fmerror_factor=None,
                  fmerror_pct=None,
                  fmerror_value=None,
                  cloud_cover=1.0,
@@ -155,22 +155,24 @@ class NemesisCore:
 
         # Set sol file if not set
         if sol_file is not None:
+            sol_file = Path(sol_file)
             # if the file can be found from here then it is not in raddata, so add it
-            if Path(sol_file).exists():
-                add_to_raddata(sol_file)
+            if sol_file.exists():
+                add_to_raddata(Path(sol_file))
                 
             # If it isnt in raddata either, raise an error
-            elif not (constants.NEMESIS_PATH / "radtrancode/raddata" / Path(sol_file)).exists():
+            elif not (constants.NEMESIS_PATH / "radtrancode/raddata" / sol_file).exists():
                 raise FileNotFoundError(f"Could not find {sol_file} here or in raddata/")
-            self.sol_file = Path(sol_file).name 
+            self.sol_file = sol_file 
         else:
-            self.sol_file = Path("solar_spectrum.dat")
+            self.sol_file = Path("solar_spec.dat")
 
         # Parse the ref file:
         self.ref = parsers.NemesisRef(self.ref_file)
 
         # Set min/max pressures
-        self.set_pressure_limits(min_pressure, max_pressure)
+        self.set_pressure_limits(max_pressure=max_pressure, 
+                                 min_pressure=min_pressure)
 
         # Set number of aerosol modes (incremented by add_profile)
         self.num_aerosol_modes = 0
@@ -182,7 +184,7 @@ class NemesisCore:
         # Add a reference to self in each Profile and set up AerosolProfiles correctly
         self.profiles = dict()
         for profile in profiles:
-            self.profile(profile)
+            self.add_profile(profile)
 
         # If in forward mode, set the number of iterations to 0
         if self.forward:
@@ -460,34 +462,40 @@ class NemesisCore:
         spx_data = spx.read(self.spx_file).geometries[0]
         num_entries = len(spx_data.wavelengths)
 
+        x = (self.fmerror_factor is not None, self.fmerror_pct is not None, self.fmerror_value is not None)
+        if sum(x) > 1:
+            raise ValueError("Must specify exactly one of fmerror_factor, fmerror_pct or fmerror_value")
+
         if num_entries > 2048:
-            warnings.warn(IndexError(f"spx file has too many wavelengths for default NEMESSI installation ({num_entries}/2048) - have you increased IDIM in arrdef.f?"))
+            warnings.warn(f"spx file has too many wavelengths for default NEMESIS installation ({num_entries}/2048) - have you increased IDIM in arrdef.f?")
         
         with open(self.directory / "fmerror.dat", mode="w+") as file:
             # Header with number of lines 
             file.write(f"{num_entries+2}\n")
 
             # Catch any cases outside the wavelength range (lower)
-            file.write(f"{0.1:.6e}  {1e-8:.6e}\n")
+            file.write(f"{0.1:.6e}  {0:.6e}\n")
 
             # Scale the spx error by either fmerror_factor, fmerror_pct or fmerror_value
             for wl, err, spc in zip(spx_data.wavelengths, spx_data.error, spx_data.spectrum):
+
                 # Check to see if this peak is fixed
                 flag = False
                 for fxp in self.fixed_peaks:
                     if fxp.isin(wl):
                         file.write(f"{wl:.6e}  {fxp.error:.6e}\n")
                         flag = True
+
                 # Otherwise, compute the new error
                 if self.fmerror_factor is not None and not flag:
                     file.write(f"{wl:.6e}  {err*self.fmerror_factor:.6e}\n")
-                elif self.fmerror_pct is not None and not flag:
+                if self.fmerror_pct is not None and not flag:
                     file.write(f"{wl:.6e}  {spc*self.fmerror_pct:.6e}\n")
-                elif self.fmerror_value is not None and not flag:
+                if self.fmerror_value is not None and not flag:
                     file.write(f"{wl:.6e}  {self.fmerror_value:.6e}\n")
 
             # Catch any cases outside the wavelength range (upper)
-            file.write(f"{100:.6e}  {1e-8:.6e}\n")
+            file.write(f"{100:.6e}  {0:.6e}\n")
 
     def _generate_xsc(self):
         """Run Makephase and Normxsc with the given inputs to generate the .xsc and phase files.
@@ -627,7 +635,7 @@ class NemesisCore:
             None
             
         Creates:
-            eleos_inputs.txt
+            summary.txt
             aerosol_names.txt"""
         
         out = ""
@@ -946,8 +954,8 @@ class NemesisCore:
         """Change the pressure limits of the core. Also sets the bottom layer height to the closest value in the .ref file
         
         Args:
-            min_pressure (float): The new minimum pressure in mbar. If None then use the minimum pressure in the .ref file
-            max_pressure (float): The new maximum pressure in mbar. If None then use the maximum pressure in the .ref file
+            max_pressure (float): The new maximum pressure in bar. If None then use the maximum pressure in the .ref file
+            min_pressure (float): The new minimum pressure in bar. If None then use the minimum pressure in the .ref file
             
         Returns:
             None"""
@@ -960,6 +968,9 @@ class NemesisCore:
             self.max_pressure = self.ref.data.pressure.max()
         else:
             self.max_pressure = max_pressure
+
+        if min_pressure >= max_pressure:
+            raise ValueError("min_pressure must be less than max_pressure!")
 
         i, _ = utils.find_nearest(self.ref.data.pressure, self.max_pressure)
         self.bottom_layer_height = self.ref.data.height.iloc[i]
@@ -1154,20 +1165,31 @@ def load_from_previous(previous_directory, parent_directory, confirm=True):
     return core
 
 
-def create_sensitivity_analysis(template_core, parent_directory, generate_cores=True, factors=(0.80, 0.90, 0.95, 1.05, 1.10, 1.20)):
-    """Create a sensitivity analysis by varying the parameters in the template core by a small amount. This is done by
-    creating a new core for each parameter in each profile, and varying that parameter by a small amount (default 1%).
+def create_sensitivity_analysis(parent_directory, 
+                                template_core,
+                                generate_cores=True, 
+                                factors=(0.80, 0.90, 0.95, 1.05, 1.10, 1.20), 
+                                forward=True):
+    
+    """
+    Create a sensitivity analysis on the template core. This is done by creating a new core for 
+    each parameter in each profile, and varying that parameter by a small amount.
     
     Args:
-        template_core (NemesisCore): The cre to use as a template
-        parent_directory (str): The parent directory to create the new cores in
-        generate_cores (bool): Whether to generate the cores or just return the list of cores to be generated
-        factors (tuple): The factors to vary the parameters by. Default is (0.8, 0.9, 0.95, 1.05, 1.1, 1.2). Note there is no 
-                         need to include 1.00 as a factor as this is equivalent to the baseline which is already calculated
+        parent_directory (str):      The parent directory to create the new cores in
+        template_core (NemesisCore): The core to use as a template
+        generate_cores (bool):       Whether to generate the cores or just return the list of cores to be generated
+        factors (tuple):             The factors to vary the parameters by. Default is (0.8, 0.9, 0.95, 1.05, 1.1, 1.2). Note there is no 
+                                     need to include 1.00 as a factor as this is equivalent to the baseline which is already calculated
+        forward (bool):              Whether to run forward models or retrievals. Use forward models to see where each parameter affects each 
+                                     spectrum and retrievals to test if different priors converge on different solutions
+    
     Returns:
-        List[NemesisCore]: A list of new cores with the parameters varied"""
+        List[NemesisCore]: A list of new cores with the parameters varied
+    """
     
     global CORE_ID_COUNTER
+    reset_core_numbering()
     parent_directory = Path(parent_directory)
     parent_directory.mkdir(parents=True)
 
@@ -1178,6 +1200,7 @@ def create_sensitivity_analysis(template_core, parent_directory, generate_cores=
     CORE_ID_COUNTER += 1
     template_core.parent_directory = parent_directory
     template_core.directory = parent_directory / f"core_{CORE_ID_COUNTER}"
+    template_core.forward = forward
     cores = [template_core]
 
     # Generate the template core if requested
@@ -1187,6 +1210,8 @@ def create_sensitivity_analysis(template_core, parent_directory, generate_cores=
 
     # Iterate through every parameter in every profile in the template core
     for label, params in template_core.get_profile_parameter_names().items():
+        file.flush()
+
         for param in params:
             # Vary the parameter value by 80% to 120%
             for factor in factors:
@@ -1201,7 +1226,7 @@ def create_sensitivity_analysis(template_core, parent_directory, generate_cores=
                 # Set to forward mode and change the core directory
                 core.parent_directory = parent_directory
                 core.directory = parent_directory / f"core_{core.id_}"
-                core.forward = True
+                core.forward = forward
 
                 # Get and modify the parameter value and log it in the parameter file
                 base_value = getattr(core.profiles[label], param)
@@ -1219,112 +1244,13 @@ def create_sensitivity_analysis(template_core, parent_directory, generate_cores=
     return cores
 
 
-def create_synthetic_spectra_cores(template_core, parent_directory, generate_cores=True, num_cores=10, variable_factor=1):
-    """Create a retrievability analysis by generating a set of synthetic spectra from template_core with each variable
-     changing by a small random amount. To use this function as a retrievability analysis, run these cores then call
-     `create_retrievability_cores()`.
-    
-    Args:
-        template_core (NemesisCore): The core object to use as a template
-        parent_directory (str): The parent directory to create the new cores in
-        generate_cores (bool): Whether to generate the cores or just return the list of cores to be generated
-        num_cores (int): The number of cores to generate
-        variable_factor (float): The maximum factor by which to scale the variables
-        
-    Returns:
-        List[NemesisCore]: A list of new cores with the parameters varied"""
-    
-    
-    global CORE_ID_COUNTER
-    CORE_ID_COUNTER = 0
-    parent_directory = Path(parent_directory)
-
-    fwd_cores = []
-    for i in range(num_cores):
-        # Copy the core used in the retrieval and set it up
-        newcore = copy.deepcopy(template_core)
-        CORE_ID_COUNTER += 1
-        newcore.id_ = CORE_ID_COUNTER
-        newcore.parent_directory = parent_directory
-        newcore.directory = newcore.parent_directory / f"core_{newcore.id_}"
-        newcore.forward = True
-        
-        # Apply random perturbations to each variable
-        for label, variables in newcore.get_profile_variable_names().items():
-            for var in variables:
-                base_value = getattr(newcore.profiles[label], var)
-                scale = np.random.uniform(-variable_factor, variable_factor)
-                setattr(newcore.profiles[label], var, base_value * (1 + scale))
-
-        # Generate the forward cores
-        if generate_cores:
-            newcore.generate_core(confirm=False)
-       
-        fwd_cores.append(newcore)
-
-    return fwd_cores
-
-
-def create_retrievability_cores(template_core, old_parent_directory, new_parent_directory, generate_cores=True, spectral_noise=0.05):
-    """Once the forward models have run (created by `create_synthetic_spectra_cores()`), extract
-    the model spectra, apply some noise and then set up retrievals to use those spectra.
-    
-    Args:
-        template_core (NemesisCore): The core used to originally create the synthetic spectra
-        old_parent_directory (str): The directory containing the forward-model cores
-        new_parent_directory (str): The directory to place the new retrieved cores in
-        generate_cores (bool):  Whether to generate the cores or not
-        spectral_noise (float): Noise to add to the spectra as a percent of each spectral point
-        
-    Returns:
-        List[NemesisCore]: The list of cores created"""
-    
-    global CORE_ID_COUNTER
-    CORE_ID_COUNTER = 0
-    new_parent_directory = Path(new_parent_directory)
-    old_parent_directory = Path(old_parent_directory)
-
-    ress = results.load_multiple_cores(old_parent_directory)
-
-    specdir = new_parent_directory / "spectra"
-    specdir.mkdir(parents=True)
-
-    new_cores = []
-    for res in ress:
-        # Read in the model spectra and add noise
-        synthetic = res.retrieved_spectrum.model * 1e-6 # conversion from uW... to W...
-        scale = np.random.uniform(-spectral_noise, spectral_noise, synthetic.shape)
-        spxfile = parsers.NemesisSpx(res.core.spx_file)
-        spxfile.spectrum = synthetic * (1 + scale)
-        spxfile.error = spectral_noise / synthetic
-
-        # Create a new core
-        new_core = copy.deepcopy(template_core)
-        CORE_ID_COUNTER += 1
-        new_core.id_ = CORE_ID_COUNTER
-        new_core.parent_directory = new_parent_directory
-        new_core.directory = new_core.parent_directory / f"core_{CORE_ID_COUNTER}"
-        new_core.forward = False
-
-        # Use the synthetic spectrum
-        spxfile.write(specdir / f"synthetic_{new_core.id_}.spx")
-        new_core.spx_file = specdir / f"synthetic_{new_core.id_}.spx"
-
-        if generate_cores:
-            new_core.generate_core(confirm=False)
-
-        new_cores.append(new_core)
-    
-    return new_cores
-
-
-def create_gas_analysis_cores(template_core, parent_directory, generate_cores=True, new_spx=None):
+def create_gas_analysis_cores(parent_directory, template_core, generate_cores=True, new_spx=None):
     """Create a set of cores where each core has a single gas excluded. USeful for determining where in 
     the spectrum each gas contributes.
     
     Args:
-        template_core (NemesisCore): The core to use as a template
         parent_directory (str): The parent directory to create the new cores in
+        template_core (NemesisCore): The core to use as a template
         generate_cores (bool): Whether to generate the cores or just return the list of cores to be generated
         new_spx (str): The path to a new spx file to use instead of the one in the template core. This is useful if you want to use a different resolution or wavelength range
 

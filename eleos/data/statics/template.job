@@ -17,6 +17,8 @@ conda activate <PYTHON_ENV>
 
 inputdir=<CORE_DIR>/core_${SLURM_ARRAY_TASK_ID}
 cd $inputdir
+
 Nemesis < nemesis.nam > nemesis.prc
 
-python -m eleos $inputdir --make-summary
+python -m eleos make-summary $inputdir --silent
+python -m eleos make-summary $inputdir --log-spectrum 

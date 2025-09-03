@@ -75,6 +75,7 @@ class NemesisResult:
         # Load core directory
         self.core_directory = Path(core_directory)
         self.core = cores.load_core(self.core_directory)
+        self.core.spx_file = self.core_directory / "nemesis.spx"
         self.profiles = self.core.profiles
 
         # Parse some files
@@ -153,11 +154,16 @@ class NemesisResult:
 
     def print_summary(self, colors=False):
         print(f"Summary of retrieval in {self.core_directory}")
+        print()
         print(f"Time taken: {utils.format_decimal_hours(self.elapsed_time)}")
+        print(f"Number of iterations: {len(self.chi_sqs)}")
+        print("Time per iteration: " + utils.format_decimal_hours(self.elapsed_time / len(self.chi_sqs)))
+        print(f"Number of retrieved parameters: {len(self.mre.initial_state_vector)}")
         print(f"Chi squared value: {self.chi_sq}")
+        print()
         
         for name, profile in self.profiles.items():
-           profile.print_table(colors=colors)
+           profile.print_table(colors=colors, forward=self.core.forward)
 
     @property
     def elapsed_time(self):
@@ -190,7 +196,7 @@ class NemesisResult:
         ax.set_ylabel("$\chi^2$")
 
     @plotting
-    def plot_spectrum(self, ax, show_chisq=True, legend=True, log=True):
+    def plot_spectrum(self, ax, show_chisq=True, legend=True, log=False):
         """Plot the measured and model spectrum on a matplotlib Axes.
         
         Args:
@@ -223,28 +229,40 @@ class NemesisResult:
             ax.legend()
 
     @plotting
-    def plot_spectrum_residuals(self, ax):
-        """Plot the log spectrum residuals on a matplotlib Axes.
+    def plot_spectrum_residuals(self, ax, log=False):
+        """Plot the spectrum residuals on a matplotlib Axes.
         
         Args:
             ax: The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes
             show_chisq (bool): Whether to display the chi-squared value of the fit
-            legend (bool): Whether to draw the legend
+            log (bool): Whether to use a log plot
 
         Returns:
             matplotlib.Figure: The Figure object to which the Axes belong
             matplotlib.Axes: The Axes object onto which the data was plotted"""
         
-        residuals = np.log(self.retrieved_spectrum.model) - np.log(self.retrieved_spectrum.measured)
+        if log:
+            residuals = np.log(self.retrieved_spectrum.model) - np.log(self.retrieved_spectrum.measured)
 
-        ax.plot(self.retrieved_spectrum.wavelength, residuals, label="Residuals", lw=1)
-        ax.fill_between(self.retrieved_spectrum.wavelength,
-                         -self.retrieved_spectrum.error / self.retrieved_spectrum.measured, 
-                         self.retrieved_spectrum.error / self.retrieved_spectrum.measured, 
-                         alpha=0.5, label="Error")
+            ax.plot(self.retrieved_spectrum.wavelength, residuals, label="Residuals", lw=1)
+            ax.fill_between(self.retrieved_spectrum.wavelength,
+                            -self.retrieved_spectrum.error / self.retrieved_spectrum.measured, 
+                            self.retrieved_spectrum.error / self.retrieved_spectrum.measured, 
+                            alpha=0.5, label="Error")
+            ax.set_ylabel("Log Residuals")
+
+        else:
+            residuals = self.retrieved_spectrum.model - self.retrieved_spectrum.measured
+
+            ax.plot(self.retrieved_spectrum.wavelength, residuals, label="Residuals", lw=1)
+            ax.fill_between(self.retrieved_spectrum.wavelength,
+                            residuals-self.retrieved_spectrum.error, 
+                            residuals+self.retrieved_spectrum.error, 
+                            alpha=0.5, label="Error")
+            ax.set_ylabel("Residuals\n(μW cm$^{-2}$ sr$^{-1}$ μm$^{-1}$)")
+
         ax.axhline(y=0, zorder=-1, c="k", ls="dashed")
         ax.set_xlabel("Wavelength (μm)")
-        ax.set_ylabel("Log Residuals")
         ax.legend()
 
     @plotting_altitude
@@ -319,6 +337,7 @@ class NemesisResult:
             if x.max() > max_value:
                 max_value = x.max()
 
+            # ax.fill_betweenx(y, 1e-12, x, label=label, facecolor="#A21700")
             ax.plot(x, y, label=label)
 
         ax.set_xlabel(unit_label)
@@ -403,7 +422,7 @@ class NemesisResult:
         ax.set_xlabel(f"Volume Mixing Ratio {label}")
         ax.legend()
 
-    def make_summary_plot(self, figsize=(11, 10)):
+    def make_summary_plot(self, figsize=(11, 10), log=False):
         """Make a summary plot with prior and retrieved spectra, error on the spectra, aerosol and chemical profiles, and chi-squared values.
         
         Args:
@@ -427,8 +446,8 @@ class NemesisResult:
                               gridspec_kw={"hspace": 0.25, "wspace": 0.35},
                               figsize=figsize)
 
-        self.plot_spectrum(ax=axs["A"])
-        self.plot_spectrum_residuals(ax=axs["B"])
+        self.plot_spectrum(ax=axs["A"], log=log)
+        self.plot_spectrum_residuals(ax=axs["B"], log=log)
         self.plot_chisq(ax=axs["C"])
         self.plot_aerosol_profiles(ax=axs["D"])
         self.plot_gas_profiles(ax=axs["E"], gas_names=names)
@@ -438,7 +457,7 @@ class NemesisResult:
         else:
             fig.suptitle(f"Retrieval in {self.core_directory.resolve()}", y=0.91)
 
-        fig.savefig(self.core_directory / "plots/summary.png", bbox_inches="tight", dpi=400)
+        fig.savefig(self.core_directory / f"plots/summary{'_log' if log else ''}.png", bbox_inches="tight", dpi=400)
 
         return fig, axs
 

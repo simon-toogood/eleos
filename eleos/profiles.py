@@ -94,8 +94,9 @@ class Profile:
 
         return groups
 
-    def print_table(self, colors=True, **kwargs):
-        if not self.retrieved:
+    def print_table(self, colors=True, forward=False, **kwargs):
+        twocol = (not self.retrieved) or forward
+        if twocol:
             headers = ["Prior", "Error"]
         else:
             headers = ["Prior", "Error", "Retrieved", "Error", "Change"]
@@ -108,12 +109,15 @@ class Profile:
 
             # Add prior (and retrieved) columns
             for p in params:
+                if twocol and ("retrieved" in p):
+                        continue
                 data[-1].append(getattr(self, p))
-            while len(data[-1]) != (4 if self.retrieved else 2):
+            
+            while len(data[-1]) < (2 if twocol else 4):
                 data[-1].append(" ")
         
             # Add the difference column
-            if self.retrieved:
+            if not twocol:
                 try:
                     pct_diff = 100*(getattr(self, params[2]) - getattr(self, params[0])) / getattr(self, params[0])
                     end = "\x1b[0m"

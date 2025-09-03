@@ -20,6 +20,7 @@ def lorentzian(x, A, mu, fwhm, offset):
 
 def voigt(x, A, mu, fwhm, offset):
     # Not sure this is *actually* a voigt profile...
+    # raise NotImplementedError("Voigt profile not yet implemented")
     sigma = fwhm / 2.35482
     return A * np.exp(-((x - mu)**2) / (2 * sigma**2)) / (1 + ((x - mu) / (fwhm / 2))**2) + offset
 
