@@ -4,6 +4,7 @@ import glob
 import h3ppy
 import planetmapper
 import copy
+import warnings
 from astropy.io import fits
 from collections import defaultdict
 from scipy.optimize import curve_fit
@@ -14,7 +15,6 @@ from scipy.signal import fftconvolve
 from . import utils
 from . import spx
 from . import constants
-
 
 def margin_trim(cube, margin_size=3):
     """
@@ -335,7 +335,7 @@ def zonal_average_tiles(filepaths, lat_width, error_scale=1, rmsd_threshold=10, 
     Returns:
         np.ndarray:       Wavelength grid, temporary - will be added to df later
         pandas.DataFrame: DataFrame containing the zonal means and information for .spx files.
-                          Columns are spectrum, error (np.ndarray's), phase, emission, azimuth, lon (floats), num_spaxels (int).
+                          Columns are spectrum, error (np.ndarrays), phase, emission, azimuth, lon (floats), num_spaxels (int).
                           Use df.index to get latitudes"""
     
     if filters is None:
@@ -423,6 +423,147 @@ def zonal_average_tiles(filepaths, lat_width, error_scale=1, rmsd_threshold=10, 
     del zonal["nans"], zonal["rmsd"]
 
     return obs.get_wavelengths_from_header(), zonal
+
+
+def groupby(filepaths, by="EMISSION", binsize=2, binstart=0, binend=90, rmsd_threshold=10, filters=None):
+    """Group spaxels from a set of JWST navigated cubes by a given backplane value.
+    
+    Args:
+        filepaths (List(str)): List of filepaths to tiles to use
+        by (str):              The planetmapper backplane name to group by
+        binsize (float):       The size of the bins to group by
+        binstart (float):      The start of the first bin (if None then use min of backplane)
+        binend (float):        The end of the last bin (if None then use max of backplane)
+        rmsd_threshold (int):  Reject any spaxels that are in the top x percentile for root-mean-square deviation from the median 
+        filters (dict):        Apply any filters to remove spaxels before averaging. Format is key=planetmapper backplane name (str)
+                               and value=(min, max). For example, filters={'EMISSION':(0, 70)} will accept only spaxels with emission angles between 0 and 70
+    
+    Returns:
+        np.ndarray:       Wavelength grid, temporary - will be added to df later
+        pandas.DataFrame: DataFrame containing the means and information for .spx files.
+                          Columns are spectrum, error (np.ndarrays), phase, emission, azimuth, lon (floats), num_spaxels (int).
+                          Use df.index to get the bin centres
+    """
+    if filters is None:
+        filters = dict()
+
+    # Convert the list of tiles into a single dataframe of spaxels
+    spaxels = flatten_tiles(filepaths)
+    spaxels["spectrum"] = spaxels["spectrum"].apply(lambda x: np.where(np.array(x) < 0, np.nan, x))
+
+    # Check valid backplane name
+    if by not in spaxels.columns:
+        raise ValueError(f"Backplane {by} not found in spaxels. Available backplanes are: {list(spaxels.columns)}")
+
+    # Set default bin edges
+    if binstart is None:
+        binstart = np.nanmin(spaxels[by])
+    if binend is None:
+        binend = np.nanmax(spaxels[by])
+    
+    # Apply any filters to remove spaxels before averaging
+    for filter_bp, bounds in filters.items():
+        if filter_bp not in spaxels.columns:
+            raise ValueError(f"Backplane {filter_bp} not found in spaxels. Available backplanes are: {list(spaxels.columns)}")
+        spaxels = spaxels[(spaxels[filter_bp] > bounds[0]) & (spaxels[filter_bp] < bounds[1])]
+
+    # Bin the spaxels by the given backplane
+    cut = pd.cut(spaxels[by], np.arange(binstart, binend, binsize))
+    grouped = spaxels.groupby(cut)   
+    nonzero = 0
+    for name, df in grouped:
+        nonzero += len(df) > 0 
+
+    i = 0
+    c = [plt.get_cmap("viridis")(j) for j in np.linspace(0, 1, nonzero)]
+    for name, df in grouped:
+        if len(df) == 0:
+            continue
+
+        # Add column to allow grouping by wavelength setting
+        df["_wl_key"] = df["wavelength"].apply(lambda x: x[0])
+        filtergrouped = df.groupby("_wl_key")
+
+        # Lists to store the individual spectra to combine multiple gratings
+        wls = []
+        spec = []
+        errs = []
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", category=RuntimeWarning)
+            
+            # Iterate over each unique wavelength grid (ie. each filter/grating combination)
+            for wl, ddf in filtergrouped:
+                print(f"Processing {name} group starting at {wl:2f} um with {len(ddf)} spaxels")
+
+                # Calculate group median
+                spectra = np.stack(ddf["spectrum"].values)
+                median = np.nanmedian(spectra, axis=0)
+
+                # Check for all-nan spectrum and skip if so
+                if np.all(np.isnan(median)):
+                    print("Skipping all-nan bin")
+                    continue
+
+                # Caclulate rmsd and remove outliers
+                ddf["rmsd"] = np.sqrt(np.nanmean((spectra - median)**2, axis=1))
+                filtered_ddf = ddf.drop(ddf[(ddf.rmsd > np.percentile(ddf.rmsd, 100-rmsd_threshold))].index)
+                print(f"Rejected {len(ddf) - len(filtered_ddf)} outliers out of {len(ddf)} spaxels")
+                    
+                # Add to list of spectra to combine multiple gratings
+                wls.append(ddf.iloc[0].wavelength)
+                spec.append(np.nanmean(np.stack(filtered_ddf["spectrum"].values), axis=0))
+                errs.append(np.nanmean(np.stack(filtered_ddf["error"].values), axis=0))
+
+
+        if len(spec) != 0:
+            w,s,e = combine_multiple_spectra(*zip(wls, spec, errs))
+            plt.plot(w, s, 
+                        c=c[i],
+                        label=f"{name}")
+            i += 1
+
+    plt.legend()
+    plt.yscale("log")
+    plt.show()
+
+
+def flatten_tiles(filepaths):
+    """Flatten a set of navigated cubes into a single dataframe of spaxels"""
+
+    # Dataframe to hold individual spaxels, final zonal spectra, various angles
+    spaxels = pd.DataFrame()
+
+    # Iterate over each tile in the mosaic
+    for tile in filepaths:
+        print("[eleos] Processing ", tile)
+
+        pd.set_option('display.max_columns', 6)
+        pd.set_option('display.width', 120)
+
+        # Get planetmapper Observation object
+        obs = planetmapper.Observation(tile)
+        obs = add_error_cubes(obs)
+
+        # Rearrange spaxels into list such that:
+        # obs.data[:,a,b] --> pixels[b + obs.data.shape[2]*a]
+
+        df = pd.DataFrame()
+    
+        wavelength = obs.get_wavelengths_from_header()
+        spectra = np.moveaxis(obs.data, 0, -1).reshape(-1, obs.data.shape[0])
+        errors = np.moveaxis(obs.error, 0, -1).reshape(-1, obs.data.shape[0])
+
+        df["wavelength"] = [wavelength] * spectra.shape[0]
+        df["spectrum"] = spectra.tolist()
+        df["error"] = errors.tolist()
+
+        for backplane in obs.backplanes.keys():
+            df[backplane] = obs.get_backplane_img(backplane).flatten()
+
+        spaxels = pd.concat([spaxels, df], ignore_index=True)
+
+    return spaxels
 
 
 def multiple_cube_average(cubes):

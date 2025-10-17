@@ -208,9 +208,16 @@ class NemesisItr(Parser):
     def add_column_names(self, profiles):
         names = []
         for label, profile in profiles.items():
+            print(profile.VARIABLES)
+            print(profile.shape.VARIABLES)
             if isinstance(profile.shape, shapes.Shape0):
-                names += [f"{label} {n}" for n in range(120)]
-            names += [f"{label} {n}" for n in profile.VARIABLES]
+                names += [f"{label} {n}" for n in range(120)] # temp value FIX
+            else:
+                names += [f"{label} {n}" for n in profile.VARIABLES]
+                print()
+
+        print("Done:")
+
         self.state_vectors.columns = names
 
 

@@ -40,6 +40,8 @@ Class template::
 
 """
 
+import numpy as np
+
 from dataclasses import dataclass
 from typing import ClassVar
 import shutil
@@ -85,6 +87,30 @@ class Shape:
     def create_required_files(self, directory):
         """Some Shapes require additional files to be created/copied into the core directory"""
         pass
+
+    def sample_from_distribution(self, **kwargs):
+        """
+        Set parameters of the Shape to random values pulled from a normal distribution, with arguments mean_[parameter] and std_[parameter].
+        For example: calling Shape4.sample_from_distribution(mean_deep_vmr=0.1, std_deep_vmr=0.05) will set the deep vmr to a random value drawn 
+        from a gaussian with the centre at 0.1 and a standard deviation of 0.05. Multiple parameters may be specified at once.
+        
+        Args:
+            * mean_[parameter]: The mean of the distribution to sample for parameter [parameter]
+            * std_[parameter]:  The standard deviation of the distribution to sample for parameter [parameter]
+        
+        Returns:
+            None
+        """
+
+        for param in kwargs.keys():
+            for vp in self.CONSTANTS + self.VARIABLES:
+                if vp in param:
+                    if f"mean_{vp}" in kwargs.keys():
+                        mean = kwargs[f"mean_vp"]
+                    else:
+                        mean = getattr(self, vp)
+                    setattr(self, vp, np.random.normal(mean, kwargs[f"std_{vp}"]))
+        
 
 
 @shapeclass
@@ -133,7 +159,6 @@ class Shape0(Shape):
 
     def generate_apr_data(self):
         return self.filepath.name
-
 
 @shapeclass
 class Shape1(Shape):

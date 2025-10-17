@@ -7,6 +7,7 @@ import itertools
 import numpy as np
 from functools import wraps
 from pathlib import Path
+from astropy import units as u
 
 import warnings
 warnings.formatwarning = lambda msg, *_: f"Warning: {msg}\n"
@@ -152,6 +153,61 @@ class NemesisResult:
 
             return values
 
+    def _convert_aerosol_units(self, data, p_ref=1):
+        """
+        Convert the aerosol densities in the aerosol.prf file to more useful units. This assumes that the cross-sections are normalised at a specific wavelength, such that the native units are cm2/g.
+        This function converts them to optical depth per km, optical depth per bar, and pressure-integrated optical depth.
+
+        Args:
+            data (np.array): Aerosol densities in cm2/g
+            p_ref (float):   The reference pressure in bar at which to calculate everything. Default is 1 bar and should not need to be changed.
+
+        Returns:
+            opacity_ODkm (np.array):  Aerosol densities in optical depth per km
+            opacity_ODbar (np.array): Aerosol densities in optical depth per bar
+            opacity_ODkm_int (np.array): Aerosol densities in optical depth integrated over height
+            opacity_ODbar_int (np.array): Aerosol densities in optical depth integrated over pressure
+
+        """
+
+        # first, calculate the average molecular weight of the atmosphere
+        masses = []
+        for gas in self.core.ref.data.columns:
+            if gas in ("height", "pressure", "temperature"):
+                continue
+            g = gas.split(" ")[0] # ignore isotope weights
+            m = constants.GASES.loc[constants.GASES["name"] == g, "molar_mass"].iloc[0]
+            masses.append(m)
+        vmrs = self.core.ref.data.copy()
+        x = vmrs.drop(columns=["height", "pressure", "temperature"])
+        vmrs["mean_molar_wt"] = (x * masses).sum(axis=1)
+
+        # then calculate the values at the target level
+        target = vmrs.loc[utils.find_nearest(self.core.ref.data["pressure"], p_ref)[0]]
+        pres = target["pressure"] * u.bar
+        temp = target["temperature"] * u.K
+        mol_wt = target["mean_molar_wt"] * u.g / u.mol
+        gravity = constants.GRAVITY[self.core.planet] * u.m / u.s**2
+        R = 8.314 * u.J / u.K / u.mol
+
+        Hscale = ((R * temp) / (mol_wt * gravity)) 
+        # print("Atmosphere scale height: ", Hscale.decompose())
+
+        rho = ((mol_wt * pres) / (R * temp))
+        # print("Atmospheric density: ", rho.decompose())
+
+        opacity_ODkm = list(data) * u.cm**2/u.g * rho
+        opacity_ODkm = opacity_ODkm.to(1 / u.km)
+        # print("Maximum optical depth per km: ", max(opacity_ODkm))
+
+        opacity_ODbar = opacity_ODkm * Hscale / pres
+        opacity_ODbar = opacity_ODbar.to(1 / u.bar)
+        # print("Maximum optical depth per bar: ", max(opacity_ODbar))
+
+        opacity_ODbar_int = np.cumsum(opacity_ODbar)
+
+        return opacity_ODkm.value, opacity_ODbar.value, opacity_ODbar_int.value
+
     def print_summary(self, colors=False):
         print(f"Summary of retrieval in {self.core_directory}")
         print()
@@ -277,8 +333,6 @@ class NemesisResult:
             matplotlib.Figure: The Figure object to which the Axes belong
             matplotlib.Axes: The Axes object onto which the data was plotted"""
 
-        print(self.core.ref)
-
         # Get the appropriate y axis data
         y = self.core.ref.pressure if pressure else self.core.ref.height
         
@@ -305,7 +359,11 @@ class NemesisResult:
         
         Args:
             ax: The matplotlib.Axes object to plot to. If omitted then create a new Figure and Axes
-            unit: The unit to convert the aerosol profiles to. Valid values are 'tau/bar' for optical thickness/bar, 'cm2/g' for the native prf units
+            unit: The unit to convert the aerosol profiles to. Valid values are:
+                  'tau/bar' for optical depth per bar, 
+                  'tau/km' for optical depth per bar, 
+                  'tau' for pressure-integrated optical depth, 
+                  'cm2/g' for the native prf units
             pressure: Whether to plot the aerosol profiles against pressure (if True) or height (if False)
             
         Returns:
@@ -325,24 +383,31 @@ class NemesisResult:
             x = self.retrieved_aerosols[label]
             y = self.retrieved_aerosols.pressure if pressure else self.retrieved_aerosols.height
 
+            tau_per_km, tau_per_bar, tau_integrated_bar = self._convert_aerosol_units(x)
+
             if unit == "tau/bar":
-                # only god himself knows whats going on with these units...
-                x *= 1e5 / 10 / constants.GRAVITY[self.core.planet]
-                unit_label = f"Optical depth / bar at {self.core.reference_wavelength:.1f}µm"
-            elif unit == "particles/g":
-                unit_label = f"Aerosol specific density (particles / gram) at {self.core.reference_wavelength:.1f}µm)"
+                unit_label = f"Optical depth / bar"
+                x = tau_per_bar
+            elif unit == "tau/km":
+                unit_label = f"Optical depth / km"
+                x = tau_per_km
+            elif unit == "tau":
+                unit_label = f"Pressure-integrated optical depth"
+                x = tau_integrated_bar
+            elif unit == "cm2/g":
+                unit_label = f"Aerosol density (cm$^2$ / gram)"
             else:
-                raise ValueError(f"Invalid unit! - Must be one of 'tau/bar', 'particles/g' - not {unit}")
+                raise ValueError(f"Invalid unit! - Must be one of 'tau/bar' 'tau/km' 'tau' or 'cm2/g' - not {unit}")
+            unit_label += f" at {self.core.reference_wavelength:.1f}µm"
             
             if x.max() > max_value:
                 max_value = x.max()
 
-            # ax.fill_betweenx(y, 1e-12, x, label=label, facecolor="#A21700")
             ax.plot(x, y, label=label)
 
         ax.set_xlabel(unit_label)
         ax.set_xscale("log")
-        ax.set_xlim(1e-6, max_value*2)
+        ax.set_xlim(1e-4, 1e2)
         ax.legend()
 
     @plotting_altitude
@@ -382,6 +447,7 @@ class NemesisResult:
 
         # Get the prior distributions if requested
         if plot_prior_profiles:
+            warnings.warn("Generating the prior distributions may be broken! Check outputs carefully!")
             priors = self.core.generate_prior_distributions()
             y3 = priors["pressure"] if pressure else priors["height"]
 

@@ -223,8 +223,7 @@ class NemesisCore:
             if x.lower() == "n":
                 return
             shutil.rmtree(self.directory)
-        os.makedirs(self.directory)
-        os.mkdir(self.directory / "plots")
+        os.makedirs(self.directory / "plots", exist_ok=True)
 
     def _save_core(self):
         """Dump the core object to a pickle file in the core directory
@@ -637,22 +636,26 @@ class NemesisCore:
         Creates:
             summary.txt
             aerosol_names.txt"""
-        
-        out = ""
-        for k, v in self.__dict__.items():
-            if k == "profiles":
-                out += "profiles:\n"
-                for label, profile in v.items():
-                    out += utils.indent(profile.__repr__(), level=1)
-                    out += "\n"
-                    out += utils.indent("\n".join([f"{k}: {v}" for k,v in profile.__dict__.items()]), level=2)
-                    out += "\n"
-            else:
-                out += f"{k}: {v}"
-            out += "\n"
 
         with open(self.directory / "summary.txt", mode="w+") as file:
             file.write(f"Generated: {time.asctime()}\n")
+            out = ""
+            for k, v in self.__dict__.items():
+                if k == "profiles":
+                    out += "profiles:\n"
+                    for label, profile in v.items():
+                        out += utils.indent(label, level=1) + "\n"
+                        for p in profile.__dict__:
+                            if p in ("core", "retrieved"):
+                                continue
+                            out += utils.indent(f"{p}: {getattr(profile, p)}", level=2) + "\n"
+
+                            if p == "shape":
+                                for pp in profile.shape.__dict__:
+                                    out += utils.indent(f"{pp}: {getattr(profile.shape, pp)}", level=3) + "\n"
+                else:
+                    out += f"{k}: {v}"
+                out += "\n"
             file.write(out)
 
         with open(self.directory / "aerosol_names.txt", mode="w+") as file:
@@ -831,7 +834,7 @@ class NemesisCore:
                 shutil.copy(filename, self.directory)
 
         # Generate the core in this directory
-        self.generate_core(verbosity=0)
+        self.generate_core(verbosity=0, confirm=False)
 
         # Run NEMESIS
         with open(self.directory / "nemesis.nam") as inp:
@@ -1300,6 +1303,39 @@ def reset_core_numbering():
         None"""
     global CORE_ID_COUNTER
     CORE_ID_COUNTER = 0
+
+
+def reset_core(core_directory):
+    """Delete all the files that NEMESIS generates and leave only the input files. 
+    Useful for re-running a retrieval from scratch."""
+
+    core_directory = Path(core_directory)
+    to_delete = [
+        "kk.dat",
+        "kk.out",
+        "nemesis.chi",
+        "nemesis.cov",
+        "nemesis.drv",
+        "nemesis.itr",
+        "nemesis.log",
+        "nemesis.mre",
+        "nemesis.pat",
+        "nemesis.prc",
+        "nemesis.prf",
+        "nemesis.raw",
+        "nemesis.sca",
+        "aerosol.prf",
+        "fcloud.prf",
+        "*slurm*",
+        "parah2.prf",
+        "refindex4.dat",
+        "refindex6.dat"
+    ]
+    for pattern in to_delete:
+        for file_path in core_directory.glob(pattern):
+            if file_path.is_file():
+                file_path.unlink()
+                print(f"Deleted: {file_path.name}")
 
 
 def clear_parent_directory(parent_directory, confirm=True):

@@ -79,13 +79,13 @@ class Profile:
 
         return new_profile
 
-    def _get_displayable_attributes(self, extra_consts=list(), extra_vars=list()):
+    def _get_displayable_attributes(self, extra_consts=tuple(), extra_vars=tuple()):
         """Get the parameters that define the profile"""
         groups = defaultdict(list)
 
-        for name in self.shape.CONSTANTS + extra_consts:
+        for name in tuple(self.CONSTANTS) + tuple(extra_consts):
             groups[name].append(name)
-        for name in self.shape.VARIABLES + extra_vars:
+        for name in tuple(self.VARIABLES) + tuple(extra_vars):
             groups[name].append(name)
             groups[name].append(name + "_error")
             if self.retrieved:
@@ -133,7 +133,7 @@ class Profile:
                     data[-1].append(f"{color}{pct_diff:+.1f}%{end}")
                 except:
                     data[-1].append(" ")
-        
+
         table = utils.generate_ascii_table(f"{self.label} {self.shape}", headers, [n for n in names], data)
         print(table, **kwargs)
         return table
@@ -220,8 +220,9 @@ class GasProfile(Profile):
         if shape is None:
             raise ValueError("shape attribute must be specified")
         self.shape = shape
-        self.VARIABLES = self.shape.VARIABLES
-        self.CONSTANTS = self.shape.CONSTANTS
+
+        self.VARIABLES = list(self.shape.VARIABLES)
+        self.CONSTANTS = list(self.shape.CONSTANTS)
 
         if not ((gas_id is None) ^ (gas_name is None)):
             raise ValueError("Specifiy exactly one of gas_name or gas_id (not both!)")
@@ -287,6 +288,21 @@ class GasProfile(Profile):
         Returns:
             str: The string to write to the .apr file"""
         return self.create_nemesis_string() + " - " + self.gas_name + "\n" + self.shape.generate_apr_data()
+
+    def sample_from_distribution(self, **kwargs):
+        """
+        Set parameters of the profile shape to random values pulled from a normal distribution, with arguments mean_[parameter] and std_[parameter].
+        For example: calling GasProfile.sample_from_distribution(mean_deep_vmr=0.1, std_deep_vmr=0.05) will set the deep vmr to a random value drawn 
+        from a gaussian with the centre at 0.1 and a standard deviation of 0.05. Multiple parameters may be specified at once.
+        
+        Args:
+            * mean_[parameter]: The mean of the distribution to sample for parameter [parameter]
+            * std_[parameter]:  The standard deviation of the distribution to sample for parameter [parameter]
+        
+        Returns:
+            None
+        """
+        self.shape.sample_from_distribution(**kwargs)
 
 
 class AerosolProfile(Profile):
@@ -450,9 +466,6 @@ class AerosolProfile(Profile):
         prof.aerosol_id = prev.aerosol_id
         return prof
 
-    def _get_displayable_attributes(self):
-        return super()._get_displayable_attributes(extra_vars=["radius", "variance", "imag_n"])
-
     def create_nemesis_string(self):
         """Create the NEMESIS code that represents the aerosol profile (eg. -1 0 32)
         
@@ -507,6 +520,33 @@ class AerosolProfile(Profile):
             utils.write_nums(file, refwave)
             for imag_n, wavelength in zip(imag_ns, xsc_parser.xsc.wavelength):
                 utils.write_nums(file, wavelength, imag_n, self.imag_n_error)
+
+    def sample_from_distribution(self, **kwargs):
+        """
+        Set parameters of the profile and profile shape to random values pulled from a normal distribution, with arguments mean_[parameter] and std_[parameter].
+        For example: calling AerosolProfile.sample_from_distribution(mean_radius=0.1, std_radius=0.05) will set the particle radius to a random value drawn 
+        from a gaussian with the centre at 0.1 and a standard deviation of 0.05. Multiple parameters may be specified at once. If only
+        the standard deviation is given for a parameter then use the current value of that parameter as the mean - ie add a random perturbation to the value)
+        
+        Args:
+            * mean_[parameter]: The mean of the distribution to sample for parameter [parameter]
+            * std_[parameter]:  The standard deviation of the distribution to sample for parameter [parameter]
+        
+        Returns:
+            None
+        """
+        # set profile-level parameters (radius, variance, real_n, imag_n)
+        for param in kwargs.keys():
+            for vp in ["radius", "variance", "real_n", "imag_n"]:
+                if vp in param:
+                    if f"mean_{vp}" in kwargs.keys():
+                        mean = kwargs[f"mean_vp"]
+                    else:
+                        mean = getattr(self, vp)
+                    setattr(self, vp, np.random.normal(mean, kwargs[f"std_{vp}"]))
+        
+        # and pass the rest to the Shape object
+        self.shape.sample_from_distribution(**kwargs)
 
 
 def get_parameter_names(base, retrieved=True):

@@ -5,19 +5,6 @@ import os
 from pathlib import Path
 
 
-def _read_radtrans_gas_id():
-    data = []
-    with open(PATH / "data/radtrans_ids.csv") as file:
-        for line in file:
-            x = line.rstrip("\n").split(",")
-            data.append(x[:7] + [x[7:],])
-    df = pd.DataFrame(data)
-    df.columns = ["radtrans_id", "name", "H04", "G03", "H12", "H16", "N_iso", "isotopes"]
-    df["G03"].astype(int)
-    df = df.astype({"radtrans_id":int, "name": str, "H04": int, "G03": int, "H12": int, "H16": int, "N_iso": int})
-    return df
-
-
 def _read_ch4_lines():
     df = pd.read_csv(PATH / "data/misc/ch4_emission.csv")
     df["wavelength"] = 10000 / df["nu"] # convert cm-1 to um because screw doing anything in wavenumbers
@@ -49,7 +36,7 @@ PATH = Path(os.path.dirname(__file__)) #: The absolute path of the prepackaged d
 
 NEMESIS_PATH = _get_nemesis_path()
 
-GASES = _read_radtrans_gas_id() #: The database of gas names and IDs used by NEMESIS
+GASES = pd.read_csv(PATH / "data/radtran_ids.csv") #: The database of gas names and IDs used by NEMESIS
 
 CH4_LINES = _read_ch4_lines() #: The database of methane emission lines
 
