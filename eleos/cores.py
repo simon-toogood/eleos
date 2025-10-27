@@ -5,10 +5,10 @@ import sys
 import signal
 import os
 import shutil
+import struct
 import re
 import copy
 import subprocess
-from collections import defaultdict
 from pathlib import Path
 import pandas as pd
 import numpy as np
@@ -17,7 +17,6 @@ import warnings
 warnings.formatwarning = lambda msg, *_: f"Warning: {msg}\n"
 
 from . import constants
-from . import spx
 from . import parsers
 from . import utils
 from . import profiles as profiles_ # to avoid namespace shadowing by NemesisCore.profiles
@@ -73,6 +72,8 @@ class NemesisCore:
                  min_pressure=None,
                  max_pressure=None,
                  instrument_ktables="NIRSPEC", 
+                 use_gases=list(),
+                 sparsify_ktables=False,
                  fmerror_factor=None,
                  fmerror_pct=None,
                  fmerror_value=None,
@@ -94,6 +95,8 @@ class NemesisCore:
             min_pressure (float):         The pressure at the top of the model atmosphere
             max_pressure (float):         The pressure at the bottom of the model atmosphere
             instrument_ktables (str):     Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use.
+            use_gases (list):             A list of the gases to use in the model, with names corresponding the to ktable names (eg. "ch4.combi.kta" would be ["ch4"])
+            sparsify_ktables (bool):      Whether to reduce the number of wavelengths in the ktables to only those that are required (may significantly speed up computation)
             fmerror_factor (float):       The factor by which to multiply the error on the spectrum (see also, fmerror_pct and fmerror_value)
             fmerror_pct (float):          If given, instead of using fmerror_factor or fmerror_value, use a flat percentage of the brightness (eg. 0.1 = 10%) (see also, fmerror_factor and fmerror_value)
             fmerror_value (float):        If given, instead of using fmerror_factor or fmerror_pct, use a flat value in W/cm2/sr/um (see also, fmerror_factor and fmerror_pct)
@@ -117,12 +120,18 @@ class NemesisCore:
         self.fmerror_value = fmerror_value
         self.cloud_cover = cloud_cover
         self.reference_wavelength = reference_wavelength
+        self.sparsify_ktables = sparsify_ktables
+        self.use_gases = use_gases
 
         # Set up instrument ktables
         if instrument_ktables.lower() not in ["nirspec", "miri"]:
             raise ValueError(f"instrument_ktables must be either 'NIRSPEC' or 'MIRI', not {instrument_ktables}")
-        self.instrument_ktables = instrument_ktables
-        self.ktable_path = constants.PATH / f"data/jupiter/{self.instrument_ktables.lower()}.kls"
+        self.instrument_ktables = instrument_ktables.lower()
+        KTABLE_PATH = Path("/data/nemesis/specdata/ktables")
+        if self.instrument_ktables == "nirspec":
+            self.ktable_path = KTABLE_PATH / "jwst_nirspec_2024"
+        elif self.instrument_ktables == "miri":
+            self.ktable_path = KTABLE_PATH / "miri/mrs2024_combi"
 
         # Set the directories of the parent folder and own core
         self.parent_directory = Path(parent_directory).resolve()
@@ -179,7 +188,6 @@ class NemesisCore:
 
         # Add a list to hold any FixedPeak classes the user wants
         self.fixed_peaks = []
-        self.excluded_gases = []
 
         # Add a reference to self in each Profile and set up AerosolProfiles correctly
         self.profiles = dict()
@@ -224,6 +232,7 @@ class NemesisCore:
                 return
             shutil.rmtree(self.directory)
         os.makedirs(self.directory / "plots", exist_ok=True)
+        os.makedirs(self.directory / "ktables", exist_ok=True)
 
     def _save_core(self):
         """Dump the core object to a pickle file in the core directory
@@ -425,10 +434,13 @@ class NemesisCore:
                 file.write("\n")
 
     def _generate_kls(self):
-        """Copy the ktables from the template core for the given instrument.
+        """
+        Copy the ktables from the input directory for the given instrument to the core, optionally sparsifying them.
+        Generate the .kls file specifying them.
+        
         Args:
-            instrument: Either 'NIRSPEC' or 'MIRI'
-            
+            None
+
         Returns:
             None
             
@@ -436,16 +448,38 @@ class NemesisCore:
             nemesis.kls
             
         TODO:
-            Add way to include/exclude different elements
-            Add option to use ktables on ALICE rather than prepackaged"""
+            Add option to use ktables on ALICE rather than prepackaged
+            Sparsify"""
+        
+        to_include = []
+        ktables = list(self.ktable_path.glob("*.kta"))
 
-        mask = [name in self.excluded_gases for name in self.get_ktable_gas_names()]
+        # Loop over each specified gas
+        for gas in self.use_gases:
 
-        with open(self.ktable_path, mode="r") as tmp:
-            with open(self.directory / "nemesis.kls", mode="w+") as file:
-                for i, line in enumerate(tmp):
-                    if not mask[i]:
-                        file.write(line)
+            # Find the correct ktable
+            for ktable in ktables:
+                name = re.search(r'([^/]+)(?=\.combi\.kta)', ktable.name).group(1)
+                if gas == name:
+                    break
+            else:
+                available_names = '\n'.join(self.get_ktable_gas_names())
+                raise ValueError(f"'{gas}'  not found in available ktables. Available ktables are:\n{available_names}\n")
+            
+            # When the loop finishes, ktable will be set to the correct file
+            to_include.append(ktable.name)
+
+            # Whether to sparsify the ktables
+            if self.sparsify_ktables:
+                print(f"Sparsifying {name}")
+                self._sparsify_single_ktable(ktable, self.directory / "ktables" / ktable.name)
+            else:
+                shutil.copy(ktable, self.directory / "ktables")
+
+        # Create the kls file
+        with open(self.directory / "nemesis.kls", mode="w+") as file:
+            for ktable in to_include:
+                file.write(f"ktables/{ktable}\n")
 
     def _generate_fmerror(self):
         """For each wavelength in the spx file, adjust the error by a factor (either fmerror_factor, _pct or _value) and write to the fmerror file. 
@@ -458,8 +492,8 @@ class NemesisCore:
         
         Creates:
             fmerror.dat """
-        spx_data = spx.read(self.spx_file).geometries[0]
-        num_entries = len(spx_data.wavelengths)
+        spx = parsers.NemesisSpx(self.spx_file)
+        num_entries = len(spx.wavelengths)
 
         x = (self.fmerror_factor is not None, self.fmerror_pct is not None, self.fmerror_value is not None)
         if sum(x) > 1:
@@ -476,7 +510,7 @@ class NemesisCore:
             file.write(f"{0.1:.6e}  {0:.6e}\n")
 
             # Scale the spx error by either fmerror_factor, fmerror_pct or fmerror_value
-            for wl, err, spc in zip(spx_data.wavelengths, spx_data.error, spx_data.spectrum):
+            for wl, err, spc in zip(spx.wavelengths, spx.error, spx.spectrum):
 
                 # Check to see if this peak is fixed
                 flag = False
@@ -666,6 +700,99 @@ class NemesisCore:
                     file.write(name + "\n")
             file.truncate(file.tell() - 1)
         
+    def _sparsify_single_ktable(self, ktable_path, output_path):
+        """
+        Reduce the size of the ktables using the Bracketing Neighbors method to select only relevant
+        wavelengths. TODO: trim the pressure grid to align with that of the model atmosphere? TODO:
+        reduce the number of g-ordinates?
+
+        Args:
+            ktable_path (str or Path): Path to the .kta file
+            output_path (str or Path): Path of the output .kta file to be wrtten
+
+        Returns:
+            None
+
+        Credit: Joe Penn (Oxford University)
+        """
+        record_length = 4
+        target_wavelengths = self.get_spx_wavelength_grid()
+
+        with open(ktable_path, 'rb') as infile, open(output_path, 'wb') as outfile:
+            # --- Read the entire original header and metadata ---
+            infile.seek(0)
+            header_data = infile.read(10 * record_length)
+            (irec0_in, npoint_in, vmin_in, delv_in, fwhm, np_val, nt_val, ng_val, idgas, isogas) = \
+                struct.unpack('iifffiiiii', header_data)
+
+            # Read metadata arrays
+            current_pos = 10 * record_length
+            infile.seek(current_pos)
+            g_ord = np.fromfile(infile, dtype=np.float32, count=ng_val)
+            current_pos += ng_val * record_length
+            infile.seek(current_pos)
+            del_g = np.fromfile(infile, dtype=np.float32, count=ng_val)
+            current_pos += ng_val * record_length
+            current_pos += 2 * record_length
+            infile.seek(current_pos)
+            press1 = np.fromfile(infile, dtype=np.float32, count=np_val)
+            current_pos += np_val * record_length
+            infile.seek(current_pos)
+            temp1 = np.fromfile(infile, dtype=np.float32, count=nt_val)
+            current_pos += nt_val * record_length
+
+            if delv_in > 0.0:
+                k_wavelengths = vmin_in + np.arange(npoint_in) * delv_in
+            else:
+                infile.seek(current_pos)
+                k_wavelengths = np.fromfile(infile, dtype=np.float32, count=npoint_in)
+
+            min_k, max_k = k_wavelengths[0], k_wavelengths[-1]
+            if np.any(target_wavelengths < min_k) or np.any(target_wavelengths > max_k):
+                # Use raise to pass the error up to the main loop
+                raise ValueError(f"Targets are outside the k-table range ({min_k:.4f} to {max_k:.4f}).")
+
+            # --- Bracketing Neighbors logic ---
+            indices_right = np.searchsorted(k_wavelengths, target_wavelengths, side='right')
+            indices_right = np.clip(indices_right, 1, len(k_wavelengths) - 1)
+            indices_left = indices_right - 1
+            all_indices = np.concatenate((indices_left, indices_right))
+            unique_indices = np.unique(all_indices) # Finds unique and sorts
+            npoint_out = len(unique_indices)
+            vcen_out = k_wavelengths[unique_indices]
+            #print(f"Found {npoint_out} unique bracketing points to extract.")
+            
+            # --- Calculate the new IREC0 and write the header ---
+            header_records_out = 10 + ng_val + ng_val + 2 + np_val + nt_val
+            if delv_in <= 0.0:
+                header_records_out += npoint_out
+            new_irec0 = header_records_out + 1
+            #print(f"Calculated new starting record for output data (IREC0): {new_irec0}")
+
+            vmin_out = vcen_out[0] if npoint_out > 0 else 0.0
+            delv_out = -1.0
+            new_header = struct.pack('iifffiiiii', new_irec0, npoint_out, vmin_out, delv_out, fwhm, np_val, nt_val, ng_val, idgas, isogas)
+            outfile.write(new_header)
+            
+            outfile.write(g_ord.astype(np.float32).tobytes())
+            outfile.write(del_g.astype(np.float32).tobytes())
+            outfile.write(b'\x00\x00\x00\x00' * 2)
+            outfile.write(press1.astype(np.float32).tobytes())
+            outfile.write(temp1.astype(np.float32).tobytes())
+            if delv_in <= 0.0:
+                outfile.write(vcen_out.astype(np.float32).tobytes())
+
+            # --- Extract and write data blocks ---
+            block_size_count = np_val * nt_val * ng_val
+            for i, idx in enumerate(unique_indices):
+                start_byte = (irec0_in - 1 + block_size_count * idx) * record_length
+                infile.seek(start_byte)
+                data_block = np.fromfile(infile, dtype=np.float32, count=block_size_count)
+                data_block[np.isnan(data_block)] = 0.0
+                outfile.write(data_block.tobytes())
+            
+            #print(f"Successfully created: {os.path.basename(output_path)}")
+
     def _get_xsc_wavelengths(self, step):
         """Get the wavelengths for use in Makephase, including the full data range and, if necessary, 
         expanding to include the reference wavelength specified. 
@@ -681,7 +808,7 @@ class NemesisCore:
         """
 
         # Get wavelengths from spx file
-        wls = spx.read(self.spx_file).geometries[0].wavelengths
+        wls = self.get_spx_wavelength_grid()
 
         # Initial guesses for start and end wavelengths
         start_wl = math.floor(min(wls) / step) * step
@@ -938,19 +1065,12 @@ class NemesisCore:
         """
         self.fixed_peaks.append(FixedPeak(central_wavelength, width, error))
 
-    def exclude_gases(self, *gases):
-        """Exclude the given gases by removing the k-tables. This assumes the k-table filepaths are of the form
-        **/<gas_name>.combi.kta. Use get_ktable_gas_names() to get a list of all the gases available."""
-        self.excluded_gases = gases
-
     def get_ktable_gas_names(self):
-        with open(self.ktable_path) as file:
-            lines = file.readlines()
-            gas_names = []
-            for line in lines:
-                match = re.search(r'([^/]+)(?=\.combi\.kta)', line)
-                if match:
-                    gas_names.append(match.group(1))
+        """Return the names of the gases used in the filenames of the ktables. Assumes a format of '[molecule].combi.kta: eg. ch4.combi.kta -> "ch4" """
+        gas_names = []
+        for ktable_path in self.ktable_path.glob("*.kta"):
+            name = re.search(r'([^/]+)(?=\.combi\.kta)', str(ktable_path))
+            gas_names.append(name.group(1))
         return gas_names
 
     def set_pressure_limits(self, max_pressure, min_pressure):
@@ -1092,6 +1212,18 @@ class NemesisCore:
             out[label] += profile.CONSTANTS
         return out
     
+    def get_spx_wavelength_grid(self):
+        """Return the wavelength grid of the spx file associated with the core.
+        
+        Args:
+            None
+            
+        Returns:
+            np.ndarray: The wavelength grid in microns"""
+        
+        spx = parsers.NemesisSpx(self.spx_file)
+        return spx.wavelengths
+
 
 class FixedPeak:
     """Used internally to specify if any spectral regions should be fixed so that NEMESIS always fits it there. Don't instantiate, instead use :meth:`~eleos.cores.NemesisCore.fix_peak`"""
@@ -1260,6 +1392,8 @@ def create_gas_analysis_cores(parent_directory, template_core, generate_cores=Tr
     Returns:
         List[NemesisCore]: A list of new cores with the gases excluded"""
     
+    raise NotImplementedError("this needs changing to conform to the new ktable system")
+
     def make_core(template_core, parent_directory, new_spx):
         global CORE_ID_COUNTER
         core = copy.deepcopy(template_core)

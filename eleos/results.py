@@ -656,6 +656,11 @@ class SensitivityAnalysis:
         
         def alpha_map(x, V, min_alpha):
             return 1 - (np.abs(x-1)/V) * (1 - min_alpha)
+        
+        def f(x, y):
+            if x == 1:
+                return "0"
+            return f"{((x-1)*100):+.0f}%"
 
         df = self._get_params(profile_label, parameter)
         ress = self.get_results(profile_label, parameter)
@@ -675,7 +680,7 @@ class SensitivityAnalysis:
         ax.set_ylim(-bound+1, bound+1)
         ax.set_ylabel(f"Change from baseline")
         ax.set_xlabel("Wavelength (µm)")
-        ax.yaxis.set_major_formatter(mpl.ticker.PercentFormatter(1.0))
+        ax.yaxis.set_major_formatter(mpl.ticker.FuncFormatter(f))
         ax.axhline(1, c="k", ls="dashed")
 
     def make_parameters_plot(self, ncol=3):

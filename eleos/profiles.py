@@ -11,9 +11,7 @@ import numpy as np
 from . import constants
 from . import shapes
 from . import utils
-from . import results
 from . import parsers
-from . import spx
 
 
 class Profile:
