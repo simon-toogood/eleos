@@ -110,7 +110,10 @@ class Shape:
                     else:
                         mean = getattr(self, vp)
                     setattr(self, vp, np.random.normal(mean, kwargs[f"std_{vp}"]))
-        
+
+    def check_validity(self):
+        """Check that the parameters for the Shape are valid. This should be overridden by subclasses"""
+        return True      
 
 
 @shapeclass
@@ -160,6 +163,7 @@ class Shape0(Shape):
     def generate_apr_data(self):
         return self.filepath.name
 
+
 @shapeclass
 class Shape1(Shape):
     """Profile is to be represented as a deep VMR up to a certain ‘knee’ pressure, and
@@ -190,6 +194,10 @@ class Shape1(Shape):
     def generate_apr_data(self):
         return f"{self.knee_pressure}\n{self.deep_vmr} {self.deep_vmr_error}\n{self.fsh} {self.fsh_error}"
 
+    def check_validity(self):
+        return self.deep_vmr >= 0 and self.fsh > 0 and self.knee_pressure > 0
+
+
 @shapeclass
 class Shape2(Shape):
     """Profile is to be represented by a simple scaling of the corresponding profile
@@ -210,6 +218,7 @@ class Shape2(Shape):
 
     def generate_apr_data(self):
         return f"{self.scale_factor} {self.scale_factor_error}"
+
 
 @shapeclass
 class Shape4(Shape):
@@ -243,6 +252,10 @@ class Shape4(Shape):
     def generate_apr_data(self):
         return f"{self.knee_pressure} {self.knee_pressure_error}\n{self.deep_vmr} {self.deep_vmr_error}\n{self.fsh} {self.fsh_error}"
 
+    def check_validity(self):
+        return self.deep_vmr >= 0 and self.fsh > 0 and self.knee_pressure > 0
+
+
 @shapeclass
 class Shape20(Shape):
     """Similar to Shape1, but profile forced to a small number above tropopause.
@@ -274,6 +287,10 @@ class Shape20(Shape):
 
     def generate_apr_data(self):
         return f"{self.knee_pressure} {self.tropopause_pressure}\n{self.deep_vmr} {self.deep_vmr_error}\n{self.fsh} {self.fsh_error}"
+
+    def check_validity(self):
+        return self.deep_vmr >= 0 and self.fsh > 0 and self.knee_pressure > 0 and self.tropopause_pressure > 0
+
 
 @shapeclass
 class Shape32(Shape):
@@ -307,6 +324,10 @@ class Shape32(Shape):
     def generate_apr_data(self):
         return f"{self.base_pressure} {self.base_pressure_error}\n{self.opacity} {self.opacity_error}\n{self.fsh} {self.fsh_error}"
         
+    def check_validity(self):
+        return self.opacity >= 0 and self.fsh > 0 and self.base_pressure > 0
+    
+
 @shapeclass
 class Shape37(Shape):
     """Cloud with constant opacity/bar between two pressure levels.
@@ -332,6 +353,10 @@ class Shape37(Shape):
 
     def generate_apr_data(self):
         return f"{self.bottom_pressure} {self.top_pressure}\n{self.opacity} {self.opacity_error}"
+
+    def check_validity(self):
+        return self.opacity >= 0 and self.bottom_pressure > 0 and self.top_pressure < self.bottom_pressure
+
 
 @shapeclass
 class Shape47(Shape):
@@ -364,6 +389,10 @@ class Shape47(Shape):
 
     def generate_apr_data(self):
         return f"{self.opacity} {self.opacity_error}\n{self.central_pressure} {self.central_pressure_error}\n{self.pressure_width} {self.pressure_width_error}"
+
+    def check_validity(self):
+        return self.opacity >= 0 and self.central_pressure > 0 and self.pressure_width > 0
+
 
 @shapeclass
 class Shape48(Shape):
@@ -402,6 +431,9 @@ class Shape48(Shape):
 
     def generate_apr_data(self):
         return f"{self.base_pressure} {self.base_pressure_error}\n{self.top_pressure} {self.top_pressure_error}\n{self.opacity} {self.opacity_error}\n{self.fsh} {self.fsh_error}"
+
+    def check_validity(self):
+        return self.opacity >= 0 and self.fsh > 0 and self.base_pressure > 0 and self.top_pressure < self.base_pressure
 
 
 def get_shape_from_id(id_):

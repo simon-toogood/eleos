@@ -1,9 +1,7 @@
-eleos/no_sync
 .github
-dist
-build
 nemesis_eleos.egg-info
 docs/build
+build
 .venv
 eleos.code-workspace
 eleos/tmp

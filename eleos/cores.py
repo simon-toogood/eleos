@@ -9,7 +9,8 @@ import struct
 import re
 import copy
 import subprocess
-from pathlib import Path
+import functools
+from pathlib import Path, PurePath
 import pandas as pd
 import numpy as np
 
@@ -109,7 +110,6 @@ class NemesisCore:
         self.id_ = CORE_ID_COUNTER
 
         # Assign attributes passed in
-        self.spx_file = Path(spx_file).resolve()
         self.planet = planet.lower()
         self.scattering = scattering
         self._forward = forward
@@ -122,6 +122,16 @@ class NemesisCore:
         self.reference_wavelength = reference_wavelength
         self.sparsify_ktables = sparsify_ktables
         self.use_gases = use_gases
+
+        # Parse spx argument
+        # Check if path or pathlike is specified
+        if isinstance(spx_file, str) or isinstance(spx_file, PurePath):
+            self.spx_file = Path(spx_file).resolve()
+            self.spx_obj = parsers.NemesisSpx(self.spx_file)
+        # otherwise assume object is a parsers.NemesisSpx
+        else:
+            self.spx_file = None
+            self.spx_obj = spx_file
 
         # Set up instrument ktables
         if instrument_ktables.lower() not in ["nirspec", "miri"]:
@@ -217,9 +227,25 @@ class NemesisCore:
         else:
             self.num_iterations = 20
 
-    def _create_directory_tree(self, prompt_if_exists):
+    def _create_directory_tree(self, confirm):
+        """
+        Create the required directory structure for the core to run in. It generates:
+        +parent_direcotry
+        +----ktables
+        +---+core_{id_}
+            +----plots
+        If the core directory already exists it will check the contents and inform the user, asking them to confirm is confirm=True.
+
+        Args:
+            confirm (bool): Whether to confirm with the user before overwriting an existing core directory
+        Returns:
+            None
+        """
+
         os.makedirs(self.parent_directory, exist_ok=True)
-        if os.path.exists(self.directory) and prompt_if_exists:
+        os.makedirs(self.parent_directory / "ktables", exist_ok=True)
+
+        if os.path.exists(self.directory) and confirm:
             if os.path.exists(self.directory / "nemesis.mre"):
                 msg = "There is already a core that has been run in"
             elif os.path.exists(self.directory / "nemesis.ref"):
@@ -231,8 +257,8 @@ class NemesisCore:
             if x.lower() == "n":
                 return
             shutil.rmtree(self.directory)
+
         os.makedirs(self.directory / "plots", exist_ok=True)
-        os.makedirs(self.directory / "ktables", exist_ok=True)
 
     def _save_core(self):
         """Dump the core object to a pickle file in the core directory
@@ -263,7 +289,6 @@ class NemesisCore:
             eleos_generation.py"""
 
         shutil.copy(self.ref_file, self.directory / "nemesis.ref")
-        shutil.copy(self.spx_file, self.directory / "nemesis.spx")
         shutil.copy(sys.argv[0], self.directory / "eleos_generation.py")
 
     def _copy_template_files(self):
@@ -280,6 +305,12 @@ class NemesisCore:
             nemesis.nam"""
         shutil.copy(constants.PATH / "data/statics/nemesis.abo", self.directory)
         shutil.copy(constants.PATH / "data/statics/nemesis.nam", self.directory)
+
+    def _generate_spx(self):
+        if self.spx_path is not None:
+            shutil.copy(self.spx_file, self.directory / "nemesis.spx")
+        else:
+            self.spx_obj.write(self.directory / "nemesis.spx")
 
     def _generate_cia(self):
         """Generate the .cia (collision induced absorbtion) file
@@ -435,7 +466,7 @@ class NemesisCore:
 
     def _generate_kls(self):
         """
-        Copy the ktables from the input directory for the given instrument to the core, optionally sparsifying them.
+        Copy the ktables from the input directory for the given instrument to the parent directory, optionally sparsifying them.
         Generate the .kls file specifying them.
         
         Args:
@@ -446,10 +477,7 @@ class NemesisCore:
             
         Creates:
             nemesis.kls
-            
-        TODO:
-            Add option to use ktables on ALICE rather than prepackaged
-            Sparsify"""
+        """
         
         to_include = []
         ktables = list(self.ktable_path.glob("*.kta"))
@@ -471,15 +499,14 @@ class NemesisCore:
 
             # Whether to sparsify the ktables
             if self.sparsify_ktables:
-                print(f"Sparsifying {name}")
-                self._sparsify_single_ktable(ktable, self.directory / "ktables" / ktable.name)
+                _sparsify_single_ktable(tuple(self.get_spx_wavelength_grid()), ktable, self.parent_directory / "ktables" / ktable.name)
             else:
-                shutil.copy(ktable, self.directory / "ktables")
+                shutil.copy(ktable, self.parent_directory / "ktables")
 
         # Create the kls file
         with open(self.directory / "nemesis.kls", mode="w+") as file:
             for ktable in to_include:
-                file.write(f"ktables/{ktable}\n")
+                file.write(f"../ktables/{ktable}\n")
 
     def _generate_fmerror(self):
         """For each wavelength in the spx file, adjust the error by a factor (either fmerror_factor, _pct or _value) and write to the fmerror file. 
@@ -700,99 +727,6 @@ class NemesisCore:
                     file.write(name + "\n")
             file.truncate(file.tell() - 1)
         
-    def _sparsify_single_ktable(self, ktable_path, output_path):
-        """
-        Reduce the size of the ktables using the Bracketing Neighbors method to select only relevant
-        wavelengths. TODO: trim the pressure grid to align with that of the model atmosphere? TODO:
-        reduce the number of g-ordinates?
-
-        Args:
-            ktable_path (str or Path): Path to the .kta file
-            output_path (str or Path): Path of the output .kta file to be wrtten
-
-        Returns:
-            None
-
-        Credit: Joe Penn (Oxford University)
-        """
-        record_length = 4
-        target_wavelengths = self.get_spx_wavelength_grid()
-
-        with open(ktable_path, 'rb') as infile, open(output_path, 'wb') as outfile:
-            # --- Read the entire original header and metadata ---
-            infile.seek(0)
-            header_data = infile.read(10 * record_length)
-            (irec0_in, npoint_in, vmin_in, delv_in, fwhm, np_val, nt_val, ng_val, idgas, isogas) = \
-                struct.unpack('iifffiiiii', header_data)
-
-            # Read metadata arrays
-            current_pos = 10 * record_length
-            infile.seek(current_pos)
-            g_ord = np.fromfile(infile, dtype=np.float32, count=ng_val)
-            current_pos += ng_val * record_length
-            infile.seek(current_pos)
-            del_g = np.fromfile(infile, dtype=np.float32, count=ng_val)
-            current_pos += ng_val * record_length
-            current_pos += 2 * record_length
-            infile.seek(current_pos)
-            press1 = np.fromfile(infile, dtype=np.float32, count=np_val)
-            current_pos += np_val * record_length
-            infile.seek(current_pos)
-            temp1 = np.fromfile(infile, dtype=np.float32, count=nt_val)
-            current_pos += nt_val * record_length
-
-            if delv_in > 0.0:
-                k_wavelengths = vmin_in + np.arange(npoint_in) * delv_in
-            else:
-                infile.seek(current_pos)
-                k_wavelengths = np.fromfile(infile, dtype=np.float32, count=npoint_in)
-
-            min_k, max_k = k_wavelengths[0], k_wavelengths[-1]
-            if np.any(target_wavelengths < min_k) or np.any(target_wavelengths > max_k):
-                # Use raise to pass the error up to the main loop
-                raise ValueError(f"Targets are outside the k-table range ({min_k:.4f} to {max_k:.4f}).")
-
-            # --- Bracketing Neighbors logic ---
-            indices_right = np.searchsorted(k_wavelengths, target_wavelengths, side='right')
-            indices_right = np.clip(indices_right, 1, len(k_wavelengths) - 1)
-            indices_left = indices_right - 1
-            all_indices = np.concatenate((indices_left, indices_right))
-            unique_indices = np.unique(all_indices) # Finds unique and sorts
-            npoint_out = len(unique_indices)
-            vcen_out = k_wavelengths[unique_indices]
-            #print(f"Found {npoint_out} unique bracketing points to extract.")
-            
-            # --- Calculate the new IREC0 and write the header ---
-            header_records_out = 10 + ng_val + ng_val + 2 + np_val + nt_val
-            if delv_in <= 0.0:
-                header_records_out += npoint_out
-            new_irec0 = header_records_out + 1
-            #print(f"Calculated new starting record for output data (IREC0): {new_irec0}")
-
-            vmin_out = vcen_out[0] if npoint_out > 0 else 0.0
-            delv_out = -1.0
-            new_header = struct.pack('iifffiiiii', new_irec0, npoint_out, vmin_out, delv_out, fwhm, np_val, nt_val, ng_val, idgas, isogas)
-            outfile.write(new_header)
-            
-            outfile.write(g_ord.astype(np.float32).tobytes())
-            outfile.write(del_g.astype(np.float32).tobytes())
-            outfile.write(b'\x00\x00\x00\x00' * 2)
-            outfile.write(press1.astype(np.float32).tobytes())
-            outfile.write(temp1.astype(np.float32).tobytes())
-            if delv_in <= 0.0:
-                outfile.write(vcen_out.astype(np.float32).tobytes())
-
-            # --- Extract and write data blocks ---
-            block_size_count = np_val * nt_val * ng_val
-            for i, idx in enumerate(unique_indices):
-                start_byte = (irec0_in - 1 + block_size_count * idx) * record_length
-                infile.seek(start_byte)
-                data_block = np.fromfile(infile, dtype=np.float32, count=block_size_count)
-                data_block[np.isnan(data_block)] = 0.0
-                outfile.write(data_block.tobytes())
-            
-            #print(f"Successfully created: {os.path.basename(output_path)}")
-
     def _get_xsc_wavelengths(self, step):
         """Get the wavelengths for use in Makephase, including the full data range and, if necessary, 
         expanding to include the reference wavelength specified. 
@@ -826,6 +760,11 @@ class NemesisCore:
 
         return start_wl, end_wl, step, idx
 
+    def _check_profile_validity(self):
+        """Check that the parameters for each Profile and Shape are valid"""
+        for label, profile in self.profiles.items():
+            profile.check_validity()
+
     def _reset_aerosol_numbering(self):
         """Reset the aerosol numbering. Useful if loading multiple AerosolProfiles from different cores
         
@@ -852,6 +791,7 @@ class NemesisCore:
         Creates:
             See _generate_* methods
         """
+        
         if verbosity == 1: print(f"Generating core {self.id_}")
 
         if verbosity == 2: print("Creating directory structure")
@@ -860,8 +800,11 @@ class NemesisCore:
         if verbosity == 2: print(f"Generating summary file")
         self._generate_summary()
 
-        if verbosity == 2: print(f"Copying .spx and .ref files")
+        if verbosity == 2: print(f"Copying .ref file")
         self._copy_input_files()
+
+        if verbosity == 2: print(f"Generating nemesis.spx")
+        self._generate_spx()
 
         if verbosity == 2: print(f"Copying boilerplate files")
         self._copy_template_files()
@@ -911,7 +854,72 @@ class NemesisCore:
         if verbosity == 2: print("Saving Eleos core object")
         self._save_core()        
 
-    def run(self):
+    def delete_auxillary_files(self):
+        """
+        Delete most of the input files and some rarely used ouptut files from the core to reduce disk space. 
+        Note, in order to run this core again the missing input files will need to be regenrated with generate_core().
+        
+        Args:
+            None
+            
+        Returns:
+            None
+        """
+
+        files = [
+            "nemesis.abo",
+            "nemesis.nam",
+            "nemesis.inp",
+            "makephase.inp",
+            "makephase.out",            
+            "normxsc.inp",
+            "normxsc.out",
+            "aerosol.ref",
+            "hgphase*.dat",
+            "kk.out",
+            "nemesis.fla",
+            "cloudf*.dat",
+            "eleos_generation.py",
+            "fcloud.ref",
+            "nemesis.out",
+            "nemesis.cia",
+            "nemesis.cor",
+            "nemesis.pha",
+            "nemesis.inp",
+            "nemesis.pat",
+            "nemesis.raw",
+            "nemesis.sca",
+            "nemesis.set",
+            "nemesis.sol",
+            "nemesis.xsc",
+            "PHASE*.DAT",
+            "refindex*.dat",
+            "pressure.lay"
+            ]
+
+        for file in files:
+            for fp in self.directory.glob(file):
+                if fp.is_file():
+                    fp.unlink()
+
+    def delete_core_directory(self, confirm=True):
+        """
+        Delete the entire core directory and all its contents.
+        
+        Args:
+            confirm (bool): Whether to confirm with the user before deleting
+        Returns:
+            None
+        """
+
+        if confirm:
+            x = input(f"Are you sure you want to delete the entire core directory at {self.directory.resolve()}? Y/N ")
+            if x.lower() == "n":
+                return
+
+        shutil.rmtree(self.directory)
+
+    def run(self, verbosity=0, confirm=False):
         """Run NEMESIS on the core. This method should only be used for short forward models as
         it does not schedule the jobs on the ALICE compute nodes (see run_alice_job() for that), 
         instead running it in the current terminal.
@@ -922,19 +930,18 @@ class NemesisCore:
         Returns:
             NemeisResult: The results object for the core"""
         
-        self.generate_core()
-        print("Running NEMESIS...")
+        self.generate_core(verbosity=verbosity, confirm=confirm)
+        if verbosity > 0:
+            print("Running NEMESIS...")
         subprocess.run("Nemesis < nemesis.nam > nemesis.prc", 
                        shell=True, 
                        cwd=self.directory,
                        stdout=subprocess.PIPE)
         res = results.NemesisResult(self.directory)
-        res.make_summary_plot()
-        print("Finished!")
+        # res.make_summary_plot()
+        if verbosity > 0:
+            print("Finished!")
         return res
-
-    def change_parent_directory(self, new_directory):
-        raise NotImplementedError("havent got round to this yet")
 
     def generate_prior_distributions(self):
         """Run NEMESIS briefly in a temporary directory to generate the prior gas and aerosol profiles.
@@ -1221,8 +1228,7 @@ class NemesisCore:
         Returns:
             np.ndarray: The wavelength grid in microns"""
         
-        spx = parsers.NemesisSpx(self.spx_file)
-        return spx.wavelengths
+        return self.spx_obj.wavelengths
 
 
 class FixedPeak:
@@ -1243,6 +1249,102 @@ class FixedPeak:
         """
         return (wl > self.central_wavelength - self.width/2) & (wl < self.central_wavelength + self.width/2)
     
+
+@functools.cache
+def _sparsify_single_ktable(wavelengths, ktable_path, output_path):
+    """
+    Reduce the size of the ktables using the Bracketing Neighbors method to select only relevant
+    wavelengths. TODO: trim the pressure grid to align with that of the model atmosphere? TODO:
+    reduce the number of g-ordinates?
+
+    Args:
+        wavelengths (np.ndarray): Wavelengths in the .spx file
+        ktable_path (str or Path): Path to the .kta file
+        output_path (str or Path): Path of the output .kta file to be wrtten
+
+    Returns:
+        None
+
+    Credit: Joe Penn (Oxford University)
+    """
+    record_length = 4
+    target_wavelengths = wavelengths
+
+    with open(ktable_path, 'rb') as infile, open(output_path, 'wb') as outfile:
+        # --- Read the entire original header and metadata ---
+        infile.seek(0)
+        header_data = infile.read(10 * record_length)
+        (irec0_in, npoint_in, vmin_in, delv_in, fwhm, np_val, nt_val, ng_val, idgas, isogas) = \
+            struct.unpack('iifffiiiii', header_data)
+
+        # Read metadata arrays
+        current_pos = 10 * record_length
+        infile.seek(current_pos)
+        g_ord = np.fromfile(infile, dtype=np.float32, count=ng_val)
+        current_pos += ng_val * record_length
+        infile.seek(current_pos)
+        del_g = np.fromfile(infile, dtype=np.float32, count=ng_val)
+        current_pos += ng_val * record_length
+        current_pos += 2 * record_length
+        infile.seek(current_pos)
+        press1 = np.fromfile(infile, dtype=np.float32, count=np_val)
+        current_pos += np_val * record_length
+        infile.seek(current_pos)
+        temp1 = np.fromfile(infile, dtype=np.float32, count=nt_val)
+        current_pos += nt_val * record_length
+
+        if delv_in > 0.0:
+            k_wavelengths = vmin_in + np.arange(npoint_in) * delv_in
+        else:
+            infile.seek(current_pos)
+            k_wavelengths = np.fromfile(infile, dtype=np.float32, count=npoint_in)
+
+        min_k, max_k = k_wavelengths[0], k_wavelengths[-1]
+        if np.any(target_wavelengths < min_k) or np.any(target_wavelengths > max_k):
+            # Use raise to pass the error up to the main loop
+            raise ValueError(f"Targets are outside the k-table range ({min_k:.4f} to {max_k:.4f}).")
+
+        # --- Bracketing Neighbors logic ---
+        indices_right = np.searchsorted(k_wavelengths, target_wavelengths, side='right')
+        indices_right = np.clip(indices_right, 1, len(k_wavelengths) - 1)
+        indices_left = indices_right - 1
+        all_indices = np.concatenate((indices_left, indices_right))
+        unique_indices = np.unique(all_indices) # Finds unique and sorts
+        npoint_out = len(unique_indices)
+        vcen_out = k_wavelengths[unique_indices]
+        #print(f"Found {npoint_out} unique bracketing points to extract.")
+        
+        # --- Calculate the new IREC0 and write the header ---
+        header_records_out = 10 + ng_val + ng_val + 2 + np_val + nt_val
+        if delv_in <= 0.0:
+            header_records_out += npoint_out
+        new_irec0 = header_records_out + 1
+        #print(f"Calculated new starting record for output data (IREC0): {new_irec0}")
+
+        vmin_out = vcen_out[0] if npoint_out > 0 else 0.0
+        delv_out = -1.0
+        new_header = struct.pack('iifffiiiii', new_irec0, npoint_out, vmin_out, delv_out, fwhm, np_val, nt_val, ng_val, idgas, isogas)
+        outfile.write(new_header)
+        
+        outfile.write(g_ord.astype(np.float32).tobytes())
+        outfile.write(del_g.astype(np.float32).tobytes())
+        outfile.write(b'\x00\x00\x00\x00' * 2)
+        outfile.write(press1.astype(np.float32).tobytes())
+        outfile.write(temp1.astype(np.float32).tobytes())
+        if delv_in <= 0.0:
+            outfile.write(vcen_out.astype(np.float32).tobytes())
+
+        # --- Extract and write data blocks ---
+        block_size_count = np_val * nt_val * ng_val
+        for i, idx in enumerate(unique_indices):
+            start_byte = (irec0_in - 1 + block_size_count * idx) * record_length
+            infile.seek(start_byte)
+            data_block = np.fromfile(infile, dtype=np.float32, count=block_size_count)
+            data_block[np.isnan(data_block)] = 0.0
+            outfile.write(data_block.tobytes())
+        
+        #print(f"Successfully created: {os.path.basename(output_path)}")
+
 
 def add_to_raddata(filepath):
     """Copy a file into the local raddata/ directory. Useful for choosing arbitrary solar spectrum files for example."""
@@ -1548,7 +1650,8 @@ def get_refractive_indicies(name, start_wl, end_wl, wl_step):
 def generate_alice_job(parent_directory, 
                        python_env_name, 
                        memory=16, 
-                       hours=24,
+                       hours=0,
+                       minutes=0,
                        username=None,
                        notify=("end", "fail"),
                        type_="normal"):
@@ -1560,6 +1663,7 @@ def generate_alice_job(parent_directory,
         python_env_name (str): The name of a conda environment which has Eleos installed
         memory (int): The amount of memory to use (in GB)
         hours (int): The number of hours to schedule the job for
+        minutes (int): The number of minutes to schedule the job for
         username (str): The username of the user running the job (eg, scat2, lnf2)
         notify (List[str] or str): What email notifications to send. Can be any combination of 'begin', 'end', 'fail'
         type_ (str): The type of job to run. Can be 'normal' or 'sensitivity'. This will determine how Eleos is run at the end of the job.
@@ -1572,7 +1676,7 @@ def generate_alice_job(parent_directory,
 
     parent_directory = Path(parent_directory)
     script_path = parent_directory / "submitjob.sh"
-    ncores = len([f for f in os.listdir(parent_directory) if not os.path.isfile(parent_directory / f)])
+    ncores = len(list(parent_directory.glob("core_*")))
 
     # Coerce notify to an iterable and create the string
     try:
@@ -1581,15 +1685,17 @@ def generate_alice_job(parent_directory,
         notify = [notify]
     notify_str = ",".join(notify).upper()   
 
-    # Assert that hours and memory are ints
+    # Assert that hours,minutes and memory are ints
     assert isinstance(hours, int)
     assert isinstance(memory, int) 
+    assert 0 <= minutes < 60
 
     # Read the submission script and replace template fields
     with open(constants.PATH / "data/statics/template.job", mode="r") as file:
         out = file.read()
         out = out.replace("<MEMORY>", str(memory))
         out = out.replace("<HOURS>", f"{hours:02}")
+        out = out.replace("<MINUTES>", f"{minutes:02}")
         out = out.replace("<N_CORES>", str(ncores))
         out = out.replace("<CORE_DIR>", str(parent_directory.resolve()))
         out = out.replace("<USERNAME>", str(username))

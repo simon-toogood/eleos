@@ -5,6 +5,94 @@ import os
 import re
 
 
+# Kramers-Kronig relations??
+def reconstruct_real_n(wavenumbers, imag_n, ref_wavenumber, ref_realn, tol=1e-12):
+    """
+    Kramers-Kronig reconstruction of the real refractive-index spectrum.
+
+    Parameters
+    ----------
+    wavenumbers : array_like
+        Wavenumbers (length N). Can be ascending or descending.
+    imag_n : array_like
+        Imaginary part of refractive index (length N).
+    ref_wavenumber : float
+        Reference wavenumber at which real part ref_realn is specified.
+    ref_realn : float
+        Real part of refractive index at ref_wavenumber.
+    tol : float, optional
+        Small tolerance for comparing floating values to zero.
+
+    Returns
+    -------
+    n : ndarray
+        Reconstructed real part of refractive index (length N), in the same
+        ordering as the input `wavenumbers`.
+    km : float
+        Interpolated value of imaginary refractive index at ref_wavenumber.
+    """
+    wavenumbers = np.asarray(wavenumbers, dtype=float)
+    imag_n = np.asarray(imag_n, dtype=float)
+
+    if wavenumbers.shape != imag_n.shape:
+        raise ValueError("wavenumbers and imag_n must have the same shape")
+
+    npoints = wavenumbers.size
+
+    # Ensure arrays are ascending in va, and remember if we reversed them
+    if wavenumbers[0] > wavenumbers[-1]:
+        va = wavenumbers[::-1].copy()
+        ka = imag_n[::-1].copy()
+        irev = True
+    else:
+        va = wavenumbers.copy()
+        ka = imag_n.copy()
+        irev = False
+
+    # Interpolate ka at ref_wavenumber to get km (equivalent to verint in Fortran)
+    # np.interp expects increasing x (va) which we ensured.
+    km = float(np.interp(ref_wavenumber, va, ka))
+
+    pi = np.pi
+    na = np.zeros_like(va)
+
+    # Main integration loop (discrete trapezoidal integration)
+    for i in range(npoints):
+        v = va[i]
+        # compute y array
+        y = np.zeros(npoints, dtype=float)
+
+        for j in range(npoints):
+            alpha = (va[j] ** 2) - (v ** 2)
+            beta  = (va[j] ** 2) - (ref_wavenumber  ** 2)
+
+            # only compute when neither divisor is (approximately) zero
+            if (abs(alpha) > tol) and (abs(beta) > tol):
+                d1 = ka[j] * va[j] - ka[i] * va[i]
+                d2 = ka[j] * va[j] - km * ref_wavenumber
+                y[j] = d1 / alpha - d2 / beta
+            else:
+                # keep y[j] = 0 when alpha==0 or beta==0 (as in Fortran)
+                y[j] = 0.0
+
+        # trapezoidal integration over va: Sum = integral y(v') dv'
+        # use adjacent intervals dv = va[l+1] - va[l]
+        Sum = 0.0
+        # If there is only one point, Sum remains 0
+        for l in range(npoints - 1):
+            dv = va[l + 1] - va[l]
+            Sum += 0.5 * (y[l] + y[l + 1]) * dv
+
+        na[i] = ref_realn + (2.0 / pi) * Sum
+
+    # reverse back if input was reversed
+    if irev:
+        n_out = na[::-1].copy()
+    else:
+        n_out = na.copy()
+
+    return n_out, km
+
 
 # Spectral lineshapes
 

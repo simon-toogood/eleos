@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=61.0", "pandas", "matplotlib", "numpy", "scipy", "astropy", "planetmapper", "h3ppy"]
+requires = ["setuptools>=61.0", "pandas", "matplotlib", "numpy", "scipy", "astropy", "planetmapper", "h3ppy", "emcee", "h5py"]
 build-backend = "setuptools.build_meta"
 
 [project]

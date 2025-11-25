@@ -136,6 +136,10 @@ class Profile:
         print(table, **kwargs)
         return table
 
+    def check_validity(self):
+        """Check that the parameters for each Profile and Shape are valid. This should be overridden by subclasses"""
+        return self.shape.check_validity()
+
 
 class TemperatureProfile(Profile):
     def __init__(self, filepath, label=None):
@@ -545,6 +549,16 @@ class AerosolProfile(Profile):
         
         # and pass the rest to the Shape object
         self.shape.sample_from_distribution(**kwargs)
+
+    def check_validity(self):
+        conditions = [
+            self.radius > 0,
+            self.variance > 0,
+            self.real_n >= 1.0,
+            self.imag_n >= 0.0,
+            self.shape.check_validity()
+        ]
+        return all(conditions)
 
 
 def get_parameter_names(base, retrieved=True):

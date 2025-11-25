@@ -141,9 +141,10 @@ class NemesisResult:
             with open(self.core_directory / "nemesis.prc") as file:
                 lines = [line for line in file if pattern in line]
                 try:
-                    values = [float(re.findall(r"[-+]?\d*\.\d+|\d+", line)[0]) for line in lines]  # Extract all floats
+                    values = [utils.get_floats_from_string(line)[0] for line in lines]  # Extract all floats
                 except IndexError:
                     values = np.array([np.nan for _ in lines])
+                    
             # Write results to .chi file
             with open(self.core_directory / "nemesis.chi", "w+") as file:
                 file.write("\n".join(map(str, values)))
