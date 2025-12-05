@@ -11,10 +11,12 @@ from scipy.optimize import curve_fit
 import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
 from scipy.signal import fftconvolve
+from pprint import pprint
 
 from . import utils
 from . import spx
 from . import constants
+
 
 def margin_trim(cube, margin_size=3):
     """
@@ -187,10 +189,8 @@ def subtract_h3p(wavelengths, spectrum, latitude=-60, region=(3.525, 3.55), retu
         return (x - in_min) * (out_max - out_min) / (in_max - in_min) + out_min
 
     temp = remap(np.abs(latitude), 40, 90, 500, 1000)
-    density = remap(np.abs(latitude), 40, 90, 1e18, 1e19)
 
     h3p_kwargs.setdefault("temperature", temp)
-    h3p_kwargs.setdefault("density", density)
     h3p_kwargs.setdefault("R", 2700)
 
     spectrum = copy.deepcopy(spectrum) * 10000 # Convert to W/m2/sr/um
@@ -200,7 +200,7 @@ def subtract_h3p(wavelengths, spectrum, latitude=-60, region=(3.525, 3.55), retu
 
     h3p = h3ppy.h3p()
     h3p.set(**h3p_kwargs, wave=w, data=s)
-    # h3p.guess_density()
+    h3p.guess_density()
     fit = h3p.fit(verbose=False)
     h3p.set(wave=wavelengths)
     h3p_pred = h3p.model(background_0=0)
@@ -368,7 +368,7 @@ def zonal_average_tiles(filepaths, lat_width, error_scale=1, rmsd_threshold=10, 
     a = 0
     # Iterate over each filepath to bin the spaxels by latitude
     for tile in filepaths:
-        print("[eleos] Processing ", tile)
+        print("Processing ", tile)
 
         # Get planetmapper Observation object
         obs = planetmapper.Observation(tile)
@@ -439,11 +439,17 @@ def groupby(filepaths, by="EMISSION", binsize=2, binstart=0, binend=90, rmsd_thr
                                and value=(min, max). For example, filters={'EMISSION':(0, 70)} will accept only spaxels with emission angles between 0 and 70
     
     Returns:
-        np.ndarray:       Wavelength grid, temporary - will be added to df later
-        pandas.DataFrame: DataFrame containing the means and information for .spx files.
-                          Columns are spectrum, error (np.ndarrays), phase, emission, azimuth, lon (floats), num_spaxels (int).
-                          Use df.index to get the bin centres
+        pd.DataFrame: Indexed with bin midpoints, columns are wavelength, spectrum, error, num_spaxels, **average value of backplanes
     """
+
+    def average_dict(data):
+        result = {}
+        for key, lists in data.items():
+            # Flatten all nested lists into one
+            flat = [x for sub in lists for x in sub]
+            result[key] = sum(flat) / len(flat)
+        return result
+
     if filters is None:
         filters = dict()
 
@@ -460,6 +466,8 @@ def groupby(filepaths, by="EMISSION", binsize=2, binstart=0, binend=90, rmsd_thr
         binstart = np.nanmin(spaxels[by])
     if binend is None:
         binend = np.nanmax(spaxels[by])
+    if binstart > binend:
+        binend, binstart = binstart, binend
     
     # Apply any filters to remove spaxels before averaging
     for filter_bp, bounds in filters.items():
@@ -474,8 +482,10 @@ def groupby(filepaths, by="EMISSION", binsize=2, binstart=0, binend=90, rmsd_thr
     for name, df in grouped:
         nonzero += len(df) > 0 
 
-    i = 0
-    c = [plt.get_cmap("viridis")(j) for j in np.linspace(0, 1, nonzero)]
+    # Create dataframe to store final output
+    out = pd.DataFrame()
+
+    # Iterate over each bin
     for name, df in grouped:
         if len(df) == 0:
             continue
@@ -488,13 +498,16 @@ def groupby(filepaths, by="EMISSION", binsize=2, binstart=0, binend=90, rmsd_thr
         wls = []
         spec = []
         errs = []
+        extras = defaultdict(list)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", category=RuntimeWarning)
             
             # Iterate over each unique wavelength grid (ie. each filter/grating combination)
+            n = 0
             for wl, ddf in filtergrouped:
                 print(f"Processing {name} group starting at {wl:2f} um with {len(ddf)} spaxels")
+                n += len(ddf)
 
                 # Calculate group median
                 spectra = np.stack(ddf["spectrum"].values)
@@ -513,19 +526,17 @@ def groupby(filepaths, by="EMISSION", binsize=2, binstart=0, binend=90, rmsd_thr
                 # Add to list of spectra to combine multiple gratings
                 wls.append(ddf.iloc[0].wavelength)
                 spec.append(np.nanmean(np.stack(filtered_ddf["spectrum"].values), axis=0))
-                errs.append(np.nanmean(np.stack(filtered_ddf["error"].values), axis=0))
+                errs.append(np.nanstd(np.stack(filtered_ddf["error"].values), axis=0))
+                for col in [x for x in df.columns if x not in ["wavelength", "spectrum", "error", "_wl_key"]]:
+                    extras[col].append(list(ddf[col]))
 
+        # Combine the multiple filter/grating combinations
+        w,s,e = combine_multiple_spectra(*zip(wls, spec, errs))
+        extra = average_dict(extras)
+        out = pd.concat([out, pd.DataFrame([{"wavelength":w, "spectrum":s, "error":e, "num_spaxels":n} | extra], index=[name.mid])])
 
-        if len(spec) != 0:
-            w,s,e = combine_multiple_spectra(*zip(wls, spec, errs))
-            plt.plot(w, s, 
-                        c=c[i],
-                        label=f"{name}")
-            i += 1
-
-    plt.legend()
-    plt.yscale("log")
-    plt.show()
+    
+    return out
 
 
 def flatten_tiles(filepaths):
@@ -536,7 +547,7 @@ def flatten_tiles(filepaths):
 
     # Iterate over each tile in the mosaic
     for tile in filepaths:
-        print("[eleos] Processing ", tile)
+        print("Processing ", tile)
 
         pd.set_option('display.max_columns', 6)
         pd.set_option('display.width', 120)

@@ -19,7 +19,23 @@ class Parameter:
         self.param_name = param_name
 
     def __str__(self):
-        return f"{self.profile_name} {self.param_name.capitalize()}"
+        return f"<Parameter: {self.profile_name} {self.param_name}>"
+    __repr__ = __str__
+
+
+def find_variable_parameters(profiles, pct_threshold=1e-5):
+    out = []
+    for profile in profiles:
+        params = profile.CONSTANTS + profile.VARIABLES
+        for param in params:
+            try:
+                val = getattr(profile, param)
+                err = getattr(profile, f"{param}_error")
+                if err / val > pct_threshold:
+                    out.append(Parameter(profile.label, param))
+            except AttributeError:
+                continue
+    return out
 
 
 def get_unique_id():

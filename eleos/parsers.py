@@ -152,12 +152,19 @@ class NemesisXsc(Parser):
                 else:
                     s = utils.get_floats_from_string(line)
                     ssas.append(s)
-
         self.ssa = pd.DataFrame(ssas)
         self.ssa.insert(0, column="wavelength", value=waves)
         self.xsc = pd.DataFrame(xscs)
         self.xsc.insert(0, column="wavelength", value=waves)
             
+    def add_aerosol_names(self):
+        names = []
+        with open(Path(self.filepath).parent / "aerosol_names.txt") as file:
+            n = file.read().split("\n")
+            for m in n:
+                names.append(m)
+        self.ssa.columns = ["wavelength"] + names
+        self.xsc.columns = ["wavelength"] + names
 
 class NemesisItr(Parser):
     """Parser for nemesis.itr. Also requires a NemesisMre parser
@@ -208,16 +215,10 @@ class NemesisItr(Parser):
     def add_column_names(self, profiles):
         names = []
         for label, profile in profiles.items():
-            print(profile.VARIABLES)
-            print(profile.shape.VARIABLES)
             if isinstance(profile.shape, shapes.Shape0):
                 names += [f"{label} {n}" for n in range(120)] # temp value FIX
             else:
                 names += [f"{label} {n}" for n in profile.VARIABLES]
-                print()
-
-        print("Done:")
-
         self.state_vectors.columns = names
 
 

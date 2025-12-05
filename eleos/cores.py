@@ -23,6 +23,8 @@ from . import utils
 from . import profiles as profiles_ # to avoid namespace shadowing by NemesisCore.profiles
 from . import results
 
+
+# if modifying this yourself: increment, then assign!
 CORE_ID_COUNTER = 0
 
 
@@ -124,14 +126,14 @@ class NemesisCore:
         self.use_gases = use_gases
 
         # Parse spx argument
-        # Check if path or pathlike is specified
-        if isinstance(spx_file, str) or isinstance(spx_file, PurePath):
-            self.spx_file = Path(spx_file).resolve()
-            self.spx_obj = parsers.NemesisSpx(self.spx_file)
-        # otherwise assume object is a parsers.NemesisSpx
-        else:
+        # check if object is a parsers.NemesisSpx
+        if isinstance(spx_file, parsers.NemesisSpx):
             self.spx_file = None
             self.spx_obj = spx_file
+        # otherwise assume pathlike is specified
+        else:
+            self.spx_file = Path(spx_file).resolve()
+            self.spx_obj = parsers.NemesisSpx(self.spx_file)
 
         # Set up instrument ktables
         if instrument_ktables.lower() not in ["nirspec", "miri"]:
@@ -307,7 +309,7 @@ class NemesisCore:
         shutil.copy(constants.PATH / "data/statics/nemesis.nam", self.directory)
 
     def _generate_spx(self):
-        if self.spx_path is not None:
+        if self.spx_file is not None:
             shutil.copy(self.spx_file, self.directory / "nemesis.spx")
         else:
             self.spx_obj.write(self.directory / "nemesis.spx")
@@ -854,6 +856,20 @@ class NemesisCore:
         if verbosity == 2: print("Saving Eleos core object")
         self._save_core()        
 
+    def get_new_id(self):
+        """Refresh the core ID to a new sequential value and update the core directory accordingly.
+        
+        Args:
+            None
+        
+        Returns:
+            None
+        """
+        global CORE_ID_COUNTER
+        CORE_ID_COUNTER += 1
+        self.id_ = CORE_ID_COUNTER
+        self.directory = self.parent_directory / f"core_{self.id_}"
+
     def delete_auxillary_files(self):
         """
         Delete most of the input files and some rarely used ouptut files from the core to reduce disk space. 
@@ -933,10 +949,9 @@ class NemesisCore:
         self.generate_core(verbosity=verbosity, confirm=confirm)
         if verbosity > 0:
             print("Running NEMESIS...")
-        subprocess.run("Nemesis < nemesis.nam > nemesis.prc", 
+        subprocess.run("Nemesis < nemesis.nam | tee nemesis.prc", 
                        shell=True, 
-                       cwd=self.directory,
-                       stdout=subprocess.PIPE)
+                       cwd=self.directory)
         res = results.NemesisResult(self.directory)
         # res.make_summary_plot()
         if verbosity > 0:
@@ -1118,41 +1133,28 @@ class NemesisCore:
         heights = self.ref.data.height
         return min(heights), max(heights)
 
-    def set_random_priors(self):
-        """For each parameter in the associated profiles, set the values randomly based on a normal distribution with mean and standard deviation given by the pre-existing values. 
-        
-        For example, if there is a single attached GasProfile with the following parameters:
-        GasProfile(gas_name="PH3", 
-                   shape=shapes.Shape20(
-                   knee_pressure=1.0, 
-                   tropopause_pressure=0.1,
-                   deep_vmr=1.86e-6,          deep_vmr_error=0.2e-6,
-                   fsh=0.3,                   fsh_error=0.1))
-        then calling this function will set deep_vmr to a value randomly sampled from a normal distribution with mean 1.86e-6 and standard deviation 0.2e-6, and 
-        fsh to a value randomly sampled from a normal distribution with mean 0.3 and standard deviation 0.1. The core can then be modified / generated as normal.
+    def set_random_priors(self, parameters):
+        """For each eleos.mcmc.Parameter object given, set the values randomly based on a 
+        normal distribution with mean and standard deviation given by the current param and param_error 
         
         Args:
-            None
+            parameters (List[mcmc.Parameters]): The parameters to randomise
 
         Returns:
             None
         """
         
-        print("Generating random priors...")
-        for label, profile in self.profiles.items():
-            for name in profile.NAMES:
-                try:
-                    mean = getattr(profile, name)
-                    sigma = getattr(profile, name + "_error")
-                    n = -1
-                    while n < 0:
-                        n = np.random.normal(mean, sigma)
-                    if sigma == 0:
-                        setattr(profile, name+"_error", 1e-8)
-                    setattr(profile, name, n)
-                except AttributeError:
-                    continue
-        print("Generated priors!")
+        for param in parameters:
+            profile = self.profiles[param.profile_name]
+            val = getattr(profile, param.param_name)
+            err = getattr(profile, param.param_name+"_error")
+            for i in range(500):
+                new_val = np.random.normal(val, err)
+                setattr(profile, param.param_name, new_val)
+                if profile.check_validity():
+                    break
+            else:
+                raise ValueError(f"Could not find valid value for {param}")
 
     def create_arbitrary_file(self, filepath, *cols, header=None):
         """Create a file with the pressures in the first columns and then a set of lists for each subsequent column
@@ -1406,7 +1408,8 @@ def create_sensitivity_analysis(parent_directory,
                                 template_core,
                                 generate_cores=True, 
                                 factors=(0.80, 0.90, 0.95, 1.05, 1.10, 1.20), 
-                                forward=True):
+                                forward=True,
+                                parameters=None):
     
     """
     Create a sensitivity analysis on the template core. This is done by creating a new core for 
@@ -1420,7 +1423,9 @@ def create_sensitivity_analysis(parent_directory,
                                      need to include 1.00 as a factor as this is equivalent to the baseline which is already calculated
         forward (bool):              Whether to run forward models or retrievals. Use forward models to see where each parameter affects each 
                                      spectrum and retrievals to test if different priors converge on different solutions
-    
+        parameters (List[mcmc.Parameter]): Optionally, a list of specific parameters to vary. 
+                                     If None, all variable parameters will be varied.
+                                     
     Returns:
         List[NemesisCore]: A list of new cores with the parameters varied
     """
@@ -1446,34 +1451,42 @@ def create_sensitivity_analysis(parent_directory,
         template_core.generate_core()
 
     # Iterate through every parameter in every profile in the template core
-    for label, params in template_core.get_profile_parameter_names().items():
-        file.flush()
+    for param in parameters:
+        base_value = getattr(template_core.profiles[param.profile_name], param.param_name)
+        for factor in factors:
+            core = copy.deepcopy(template_core)
+            core.get_new_id()
+            core.forward = forward
+            setattr(core.profiles[param.profile_name], param.param_name, base_value * factor)
+            cores.append(core)
+            file.write(f"{core.id_},{param.profile_name},{param.param_name},{base_value},{base_value * factor},{factor}\n")
+            file.flush()
+            if generate_cores:
+                core.generate_core()
+            
 
-        for param in params:
-            # Vary the parameter value by 80% to 120%
-            for factor in factors:
+    # for label, params in template_core.get_profile_parameter_names().items():
+    #     file.flush()
 
-                # Copy the core (deep copy to make sure nothing is passed by reference)
-                core = copy.deepcopy(template_core)
+    #     for param in params:
+    #         # Vary the parameter value by 80% to 120%
+    #         for factor in factors:
 
-                # Increment core ID counter manually
-                CORE_ID_COUNTER += 1
-                core.id_ = CORE_ID_COUNTER
+    #             # Copy the core (deep copy to make sure nothing is passed by reference)
+    #             core = copy.deepcopy(template_core)
+    #             core.parent_directory = parent_directory
+    #             core.get_new_id()
+    #             core.forward = forward
 
-                # Set to forward mode and change the core directory
-                core.parent_directory = parent_directory
-                core.directory = parent_directory / f"core_{core.id_}"
-                core.forward = forward
+    #             # Get and modify the parameter value and log it in the parameter file
+    #             base_value = getattr(core.profiles[label], param)
+    #             setattr(core.profiles[label], param, base_value * factor)
+    #             cores.append(core)
+    #             file.write(f"{core.id_},{label},{param},{base_value},{base_value * factor},{factor}\n")
 
-                # Get and modify the parameter value and log it in the parameter file
-                base_value = getattr(core.profiles[label], param)
-                setattr(core.profiles[label], param, base_value * factor)
-                cores.append(core)
-                file.write(f"{core.id_},{label},{param},{base_value},{base_value * factor},{factor}\n")
-
-                # Generate the cores if requested
-                if generate_cores:
-                    core.generate_core()
+    #             # Generate the cores if requested
+    #             if generate_cores:
+    #                 core.generate_core()
 
     # Always close your files, kids!
     file.close()
@@ -1661,7 +1674,7 @@ def generate_alice_job(parent_directory,
     Args:
         parent_directory (str): The directory containing the NEMESIS core directories to be run
         python_env_name (str): The name of a conda environment which has Eleos installed
-        memory (int): The amount of memory to use (in GB)
+        memory (int): The amount of memory to use as a string, formatted like '100mb' or '16gb'
         hours (int): The number of hours to schedule the job for
         minutes (int): The number of minutes to schedule the job for
         username (str): The username of the user running the job (eg, scat2, lnf2)
@@ -1685,15 +1698,15 @@ def generate_alice_job(parent_directory,
         notify = [notify]
     notify_str = ",".join(notify).upper()   
 
-    # Assert that hours,minutes and memory are ints
-    assert isinstance(hours, int)
-    assert isinstance(memory, int) 
+    # Assert that hours,minutes and memory are correct
+    assert hours >= 0
+    assert memory.endswith("mb") or memory.endswith("gb")
     assert 0 <= minutes < 60
 
     # Read the submission script and replace template fields
     with open(constants.PATH / "data/statics/template.job", mode="r") as file:
         out = file.read()
-        out = out.replace("<MEMORY>", str(memory))
+        out = out.replace("<MEMORY>", memory)
         out = out.replace("<HOURS>", f"{hours:02}")
         out = out.replace("<MINUTES>", f"{minutes:02}")
         out = out.replace("<N_CORES>", str(ncores))

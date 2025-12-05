@@ -3,7 +3,7 @@
 #SBATCH --job-name=nemesis
 #SBATCH --account=nemesis
 #SBATCH --time=<HOURS>:<MINUTES>:00
-#SBATCH --mem=<MEMORY>gb
+#SBATCH --mem=<MEMORY>
 #SBATCH --mail-type=<NOTIFY>
 #SBATCH --mail-user=<USERNAME>@leicester.ac.uk
 #SBATCH --export=NONE

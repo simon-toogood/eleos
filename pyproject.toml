@@ -1,27 +1,38 @@
 [build-system]
-requires = ["setuptools>=61.0", "pandas", "matplotlib", "numpy", "scipy", "astropy", "planetmapper", "h3ppy", "emcee", "h5py"]
+requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "nemesis_eleos"
 version = "0.9.15"
 authors = [
-  { name="Simon Toogood", email="scat2@leicester.ac.uk" },
+  { name = "Simon Toogood", email = "scat2@leicester.ac.uk" },
 ]
 description = "A Python interface to the NEMESIS spectral inversion tool"
 readme = "README.md"
-license = {file = "LICENSE"}
-requires-python = ">= 3.9"
+license = { file = "LICENSE" }
+requires-python = ">=3.9"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
 ]
 
+dependencies = [
+    "pandas",
+    "matplotlib",
+    "numpy",
+    "scipy",
+    "astropy",
+    "planetmapper",
+    "h3ppy",
+    "emcee",
+    "h5py"
+]
+
 [project.urls]
 Homepage = "https://github.com/simon-toogood/eleos"
 Documentation = "https://eleos.readthedocs.io"
 
-[tools.setuptools]
+[tool.setuptools]
 include-package-data = true
-

@@ -609,7 +609,7 @@ class SensitivityAnalysis:
             
         """
         self.parent_directory = Path(parent_directory)
-        self.results = load_multiple_cores(parent_directory)
+        self.results = load_multiple_cores(parent_directory, failed='warn')
         self.baseline = self.results[0]
         self.params = pd.read_csv(self.parent_directory / "sensitivity_analysis.txt")
     
@@ -669,11 +669,16 @@ class SensitivityAnalysis:
 
         for factor, r in zip(df["Factor"], ress):
             y = r.retrieved_spectrum.model / base
-            ax.plot(r.retrieved_spectrum.wavelength, 
-                    y, 
-                    alpha=alpha_map(factor, 1-df["Factor"].min(), 0.25), 
-                    color="#FF0000" if factor > 1 else "#0044FF",
-                    label=factor)
+            # ax.plot(r.retrieved_spectrum.wavelength, 
+            #         y, 
+            #         alpha=alpha_map(factor, 1-df["Factor"].min(), 0.25), 
+            #         color="#FF0000" if factor > 1 else "#0044FF",
+            #         label=factor)
+            ax.fill_between(r.retrieved_spectrum.wavelength,
+                            y, 
+                            1, 
+                            alpha=0.2, 
+                            color="#FF0000" if factor > 1 else "#0044FF")
             
         
         low, high = ax.get_ylim()
@@ -688,7 +693,7 @@ class SensitivityAnalysis:
         p = self._get_all_params()
         nrow = int(np.ceil(len(p) / ncol))
 
-        fig, axs = plt.subplots(nrow , ncol, figsize=(4*ncol, 1.5*nrow), sharex=True)
+        fig, axs = plt.subplots(nrow , ncol, figsize=(4*ncol, 1.5*nrow), sharex=False)
         axs = axs.flatten()
 
         for ax in axs[-(nrow*ncol - len(p)):]:
@@ -721,30 +726,35 @@ class SensitivityAnalysis:
         x.savefig(self.parent_directory / name, bbox_inches="tight", **kwargs)
 
 
-def load_multiple_cores(parent_directory, raise_errors=True):
+def load_multiple_cores(parent_directory, failed='warn'):
     """Read in all the cores in a given directory and return a list of NemesisResult objects.
     
     Args:
         parent_directory (str): The directory containing all the individual core directories
-        raise_errors (bool): Whether to raise an error if a retieval failed (True) or to silently skip it (False) 
+        failed (str): Whether to raise an error if a retieval failed ('raise') or to warn and skip it ('warn'), or silently skip ('skip') 
         
     Returns:
         list[NemesisResult]: A list containing the result object for each core"""
     
     parent_directory = Path(parent_directory)
 
+    assert failed in ("raise", "warn", "skip"), "failed parameter must be one of 'raise', 'warn' or 'skip'"
+
     out = []
     for core in sorted(parent_directory.glob("core_*"), key=sort_key_paths):
         try:
             out.append(NemesisResult(core))
         except Exception as e:
-            warnings.warn(f"Failed to load core {core}")
-            if raise_errors:
+            if failed == "warn":
+                warnings.warn(f"Failed to load core {core}")
+            
+            if failed == "raise":
                 raise e
+            
     return out
 
 
-def load_best_cores(parent_directory, n, raise_errors=True):
+def load_best_cores(parent_directory, n, failed='warn'):
     """Load n cores from the parent_directory with the lowest chi-squared values.
 
     Args:
@@ -781,7 +791,9 @@ def load_best_cores(parent_directory, n, raise_errors=True):
         try:
             rs.append(NemesisResult(d))
         except Exception as e:
-            if raise_errors:
+            if failed == "warn":
+                warnings.warn(f"Failed to load core {d}")
+            if failed == "raise":
                 raise e
             
     return rs
