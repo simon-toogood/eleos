@@ -54,7 +54,7 @@ class Profile:
         self.retrieved = False
 
     @classmethod
-    def from_previous_retrieval(cls, result, label):
+    def from_previous_retrieval(cls, result, label, use_retrieval_errors=False):
         """Create a Profile object using the retrieved parameters from a previous retrieval as priors. Use either id or label to specify the profile to use in the previous retrieval.
         
         Args:
@@ -70,8 +70,8 @@ class Profile:
         if prev is None:
             raise ValueError(f"Profile with label {label} not found in previous retrieval")
         
-        new_profile = cls._create_profile_from_previous_retrieval(prev)
-        new_profile.shape._set_prior_to_retrieved()
+        new_profile = cls._create_profile_from_previous_retrieval(prev, use_retrieval_errors)
+        new_profile.shape._set_prior_to_retrieved(use_retrieval_errors)
         new_profile.retrieved = False
         new_profile.core = result.core
 
@@ -241,7 +241,7 @@ class GasProfile(Profile):
     def __repr__(self):
         return f"<GasProfile {self.gas_name} [{self.create_nemesis_string()}]>"
 
-    def _create_profile_from_previous_retrieval(prev):
+    def _create_profile_from_previous_retrieval(prev, use_retrieval_errors=False):
         return GasProfile(gas_name=prev.gas_name, 
                           isotope_id=prev.isotope_id, 
                           shape=prev.shape, 
@@ -411,26 +411,26 @@ class AerosolProfile(Profile):
 
         self.retrieved = True
 
-    def _create_profile_from_previous_retrieval(prev):
+    def _create_profile_from_previous_retrieval(prev, use_retrieval_errors=False):
         if prev.retrieve_optical:
             if prev.lookup: 
                 prof = AerosolProfile(shape=           prev.shape,
                                       radius=          prev.retrieved_radius,
-                                      radius_error=    prev.retrieved_radius_error,
+                                      radius_error=    prev.retrieved_radius_error if use_retrieval_errors else prev.radius_error,
                                       variance=        prev.retrieved_variance,
-                                      variance_error=  prev.retrieved_variance_error,
+                                      variance_error=  prev.retrieved_variance_error if use_retrieval_errors else prev.variance_error,
                                       n_lookup=        prev.n_lookup,
                                       label=           prev.label,
                                       retrieve_optical=True)
             else:
                 prof = AerosolProfile(shape=           prev.shape,
                                       radius=          prev.retrieved_radius,
-                                      radius_error=    prev.retrieved_radius_error,
+                                      radius_error=    prev.retrieved_radius_error if use_retrieval_errors else prev.radius_error,
                                       variance=        prev.retrieved_variance,
-                                      variance_error=  prev.retrieved_variance_error,
+                                      variance_error=  prev.retrieved_variance_error if use_retrieval_errors else prev.variance_error,
                                       real_n=          prev.real_n,
                                       imag_n=          prev.retrieved_imag_n,
-                                      imag_n_error=    prev.retrieved_imag_n_error,
+                                      imag_n_error=    prev.retrieved_imag_n_error if use_retrieval_errors else prev.imag_n_error,
                                       label=           prev.label,
                                       retrieve_optical=True)
         else:

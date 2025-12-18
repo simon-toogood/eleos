@@ -64,15 +64,14 @@ class Shape:
     def __repr__(self):
         return f"<Shape{self.ID}>"
     
-    def _set_prior_to_retrieved(self):
+    def _set_prior_to_retrieved(self, use_retrieval_errors=False):
         """Set the prior values to the retrieved values and delete the retrived_* attributes."""
-        for base in self.VARIABLES:
-            for name in [base, f"{base}_error"]:
-                try:
-                    setattr(self, name, getattr(self, "retrieved_"+name))
-                    delattr(self, "retrieved_"+name)
-                except AttributeError:
-                    print(f"Clear attribute failed for {name} on {self}")
+        for name in self.VARIABLES:
+            setattr(self, name, getattr(self, f"retrieved_{name}"))
+            delattr(self, f"retrieved_{name}")
+            if use_retrieval_errors:
+                setattr(self, f"{name}_error", getattr(self, f"retrieved_{name}_error"))
+            delattr(self, f"retrieved_{name}_error")
 
     def generate_apr_data(self):
         """Generate the section of the .apr file that stores the shape parameters

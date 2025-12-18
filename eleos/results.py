@@ -81,8 +81,8 @@ class NemesisResult:
 
         # Parse some files
         self.mre = parsers.NemesisMre(self.core_directory / "nemesis.mre")
-        self.aerosol_prf = parsers.AerosolPrf(self.core_directory / "aerosol.prf")
-        self.nemesis_prf = parsers.NemesisPrf(self.core_directory / "nemesis.prf")
+        self.aerosol_prf = parsers.AerosolRef(self.core_directory / "aerosol.prf")
+        self.nemesis_prf = parsers.NemesisRef(self.core_directory / "nemesis.prf")
         self.aerosol_prf.data["pressure"] = self.nemesis_prf.data["pressure"]
 
         # Parse the iterations file for retrievals
@@ -274,7 +274,7 @@ class NemesisResult:
 
         ax.plot(self.retrieved_spectrum.wavelength, self.retrieved_spectrum.model, c="r", lw=0.5, label="Model" if legend else None)
 
-        if show_chisq:
+        if self.chi_sq is not None and show_chisq:
             plt.text(0.95, 0.05, f"$\chi^2 = ${self.chi_sq:.3f}",
                 horizontalalignment='right',
                 verticalalignment='bottom',
@@ -797,6 +797,33 @@ def load_best_cores(parent_directory, n, failed='warn'):
                 raise e
             
     return rs
+
+
+def load_parallelised_cores(parent_directory):
+    """Given a directory of cores generated with cores.parallelise_forward, load them and recombine into a
+    single NemesisResult object. The chi-sq of the core will be set to None, and the chi_sqs attribute will 
+    be set to the chi squared values of each chunk (ie, chi squared as a coarse function of wavelength)
+    
+    Args:
+        parent_directory (str): Path to the directory of cores
+        
+    Returns:
+        NemesisResult: The recombined results object
+    """
+
+    ress = load_multiple_cores(parent_directory, failed="raise")
+    retspec = None
+    chis = []
+    for r in ress:
+        if retspec is None:
+            retspec = r.retrieved_spectrum
+        else:
+            retspec = pd.concat([retspec, r.retrieved_spectrum], ignore_index=True)
+        chis.append(r.chi_sq)
+    ress[0].retrieved_spectrum = retspec
+    ress[0].chi_sq = None
+    ress[0].chi_sqs = chis
+    return ress[0]
 
 
 def sort_key_paths(path):

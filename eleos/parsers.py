@@ -31,24 +31,28 @@ class NemesisRef(Parser):
     """Parser for nemesis.ref and nemesis.prf
     
     Attributes:
-        amform:    Number of latitudes (always 1)
-        planet_id: ID of the planet being analysed.
-        latitude:  Latitude at which the .ref file applies
-        num_layers:Number of layers used 
-        num_gases: Number of gases in the file
-        gas_names: List of the names of all the gases
-        data:      Contains the pressure, temperature, and VMR profiles of each gas at each height
+        amform:     How the VMRs add up (always assumed to be 1: sum(VMR per layer)==1)
+        planet_id:  ID of the planet being analysed.
+        latitude:   Latitude at which the .ref file applies
+        num_layers: Number of layers used 
+        num_gases:  Number of gases in the file
+        gas_names:  List of the names of all the gases
+        data:       Contains the pressure, temperature, and VMR profiles of each gas at each height
     """
+
     def __init__(self, filepath):
-        self._extra_header = True
         super().__init__(filepath)
 
     def read(self):
         with open(self.filepath) as file:
             lines = file.read().split("\n")
-            if self._extra_header:
+            # remove the stupid extra magic number at the top of ref files
+            if self.filepath.suffix == ".ref":
                 del lines[1]
-                
+                extra_header = 1
+            else:
+                extra_header = 0
+
         self.amform, = utils.get_ints_from_string(lines[0])
         planet_id, latitude, num_layers, num_gases = utils.get_floats_from_string(lines[1])
         self.planet_id = int(planet_id)
@@ -63,17 +67,28 @@ class NemesisRef(Parser):
             self.gas_names.append(f"{gas_name} {isotope_id}")
 
         self.data = pd.read_table(self.filepath, 
-                                  skiprows=3+int(self._extra_header)+self.num_gases, 
+                                  skiprows=3+extra_header+self.num_gases, 
                                   sep="\s+", 
                                   header=None)
         self.data.columns = ["height", "pressure", "temperature"] + self.gas_names
 
+    def write(self, filepath):
+        """Write the object to a new .ref file
 
-class NemesisPrf(NemesisRef):
-    def __init__(self, filepath):
-        self.filepath = Path(filepath)
-        self._extra_header = False
-        self.read()
+        Args:
+            filepath (str): Path to the new .ref file
+        
+        Returns:
+            None
+        """
+        out = f"1\n{self.amform}\n{self.planet_id} {self.latitude} {self.num_layers} {self.num_gases}\n"
+        for gas_name in self.gas_names:
+            name, isotopologue = gas_name.split(" ")
+            radtranid = constants.GASES.loc[constants.GASES["name"] == name, "radtrans_id"].iloc[0]
+            out += f"{radtranid:>2}  {isotopologue}\n"
+        out += self.data.to_string(index=False)
+        with open(filepath, mode="w+") as file:
+            file.write(out)
 
 
 class NemesisMre(Parser):
@@ -165,6 +180,7 @@ class NemesisXsc(Parser):
                 names.append(m)
         self.ssa.columns = ["wavelength"] + names
         self.xsc.columns = ["wavelength"] + names
+
 
 class NemesisItr(Parser):
     """Parser for nemesis.itr. Also requires a NemesisMre parser
@@ -502,20 +518,30 @@ class MakephaseOut(Parser):
                 names.append(m + " imag")
         
    
-class AerosolPrf(Parser):
+class AerosolRef(Parser):
     """Parser for the aerosol.prf file
     
     Attributes:
-        data: pd.DataFrame containing the aerosol density as a function of height. The units of aerosol density are particles per gram of atmosphere"""
+        num_modes (int): The number of aerosol modes defined in the file
+        data (pandas.DataFrame): DataFrame containing the aerosol density as a function of height. The units of aerosol density are particles per gram of atmosphere"""
     
     def __init__(self, filepath):
         super().__init__(filepath)
         self.add_aerosol_names()
 
+    @classmethod
+    def empty(cls, heights, num_modes=1):
+        ref = cls.__new__(cls)
+        ref.num_modes = num_modes
+        ref.data = pd.DataFrame({"height":heights})
+        for i in range(num_modes):
+            ref.data[f"aerosol_{i}"] = ["0.0" for _ in range(len(heights))]
+        return ref
+    
     def read(self):
         self.data = pd.read_table(self.filepath, sep="\s+", skiprows=2, header=None)
-        num = len(self.data.columns) - 1
-        header = ["height"] + [f"aerosol_{x}" for x in range(1, num+1)]
+        self.num_modes = len(self.data.columns) - 1
+        header = ["height"] + [f"aerosol_{x}" for x in range(1, self.num_modes+1)]
         self.data.columns = header
 
     def add_aerosol_names(self):
@@ -524,6 +550,20 @@ class AerosolPrf(Parser):
             if names == [""]:
                 return
             self.data.columns = ["height"] + names
+
+    def write(self, filepath):
+        """Write the data in the object to a new aerosol.ref file
+
+        Args:
+            filepath (str): The filepath to the new aerosol.ref file
+
+        Returns:
+            None
+        """
+        out = f"# Generated by Eleos\n{len(self.data)} {len(self.data.columns)-1}\n"
+        out += self.data.to_string(header=None, index=None)
+        with open(filepath, mode="w+") as file:
+            file.write(out)
 
 
 class ParaH2Ref(Parser):
