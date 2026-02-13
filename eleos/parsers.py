@@ -1,5 +1,6 @@
 """This module provides parsing objects for reading some NEMESIS files, such as nemesis.ref"""
 
+from isort import file
 import pandas as pd
 import itertools as it
 import io
@@ -172,12 +173,37 @@ class NemesisXsc(Parser):
         self.xsc = pd.DataFrame(xscs)
         self.xsc.insert(0, column="wavelength", value=waves)
             
-    def add_aerosol_names(self):
-        names = []
-        with open(Path(self.filepath).parent / "aerosol_names.txt") as file:
-            n = file.read().split("\n")
-            for m in n:
-                names.append(m)
+    def add_aerosol_names(self, names=None):
+        """Add the aerosol profile names/labels to the ssa and xsc DataFrames
+
+        Args:
+            names (None / str / AerosolProfile / list[AerosolProfile]): The names to give the aerosol profiles. 
+            By default it looks for a aerosol_names.txt file that Eleos generated when a core is generated. 
+            This can be overridden with a string, AerosolProfile, or a list of either type.
+
+        Returns:
+            None
+
+        """
+        if names is None:
+            names = []
+            with open(Path(self.filepath).parent / "aerosol_names.txt") as file:
+                n = file.read().split("\n")
+                for m in n:
+                    names.append(m)
+        
+        elif isinstance(names, profiles_.AerosolProfile):
+            names = [names.label]
+
+        elif isinstance(names, str):
+            names = [names]
+        
+        elif all([isinstance(p, profiles_.AerosolProfile) for p in names]):
+            names = [p.label for p in names]
+
+        else:
+            raise ValueError("names must be either None, a single string, a list of strings, a single AerosolProfile, or a list of AerosolProfiles")
+
         self.ssa.columns = ["wavelength"] + names
         self.xsc.columns = ["wavelength"] + names
 
@@ -249,6 +275,11 @@ class NemesisPrc(Parser):
             for line in file:
                 if "chi" in line and "should" not in line:
                     self.chisq.append(utils.get_floats_from_string(line)[0])
+    
+    def write_chisqs(self, filepath):
+        with open(filepath, mode="w+") as file:
+            for chisq in self.chisq: 
+                file.write(f"{chisq}\n")
 
 
 class NemesisSpx(Parser):

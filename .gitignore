@@ -6,3 +6,4 @@ build
 eleos.code-workspace
 eleos/tmp
 eleos/__pycache__
+dev_*

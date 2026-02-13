@@ -1,16 +1,16 @@
-import pandas as pd
-import matplotlib.pyplot as plt
-import matplotlib as mpl
 import shutil
 import re
 import itertools
-import numpy as np
 from functools import wraps
 from pathlib import Path
-from astropy import units as u
-
 import warnings
-warnings.formatwarning = lambda msg, *_: f"Warning: {msg}\n"
+
+import numpy as np
+import pandas as pd
+import matplotlib.pyplot as plt
+import matplotlib as mpl
+from cycler import cycler
+from astropy import units as u
 
 from . import profiles
 from . import utils
@@ -18,6 +18,15 @@ from . import cores
 from . import constants
 from . import parsers
 from . import shapes
+
+# set up warning formatter
+warnings.formatwarning = lambda msg, *_: f"Warning: {msg}\n"
+
+# set up custom mpl cycler
+colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
+linestyles = ['-', '--', ':', '-.']
+style_cycler = cycler(linestyle=linestyles) * cycler(color=colors)
+plt.rcParams['axes.prop_cycle'] = style_cycler
 
 
 def plotting(func):
@@ -76,7 +85,7 @@ class NemesisResult:
         # Load core directory
         self.core_directory = Path(core_directory)
         self.core = cores.load_core(self.core_directory)
-        self.core.spx_file = self.core_directory / "nemesis.spx"
+        self.core.spectrum = self.core_directory / "nemesis.spx"
         self.profiles = self.core.profiles
 
         # Parse some files
@@ -127,32 +136,9 @@ class NemesisResult:
         Creates:
             nemesis.chi"""
 
-        if (self.core_directory / "nemesis.chi").is_file():
-            with open(self.core_directory / "nemesis.chi") as file:
-                return [float(line) for line in file]
-        else:
-            # Pattern to match to find values in the .prc file
-            if self.core.forward:
-                pattern = "chisq/ny is equal to :"
-            else:
-                pattern = "chisq/ny = "
-            
-            # Parse the .prc file
-            with open(self.core_directory / "nemesis.prc") as file:
-                lines = [line for line in file if pattern in line]
-                try:
-                    values = [utils.get_floats_from_string(line)[0] for line in lines]  # Extract all floats
-                except IndexError:
-                    values = np.array([np.nan for _ in lines])
-                    
-            # Write results to .chi file
-            with open(self.core_directory / "nemesis.chi", "w+") as file:
-                file.write("\n".join(map(str, values)))
-
-            if len(values) == 0:
-                values = [np.nan]
-
-            return values
+        prc = parsers.NemesisPrc(self.core_directory / "nemesis.prc")
+        prc.write_chisqs(self.core_directory / "nemesis.chi")
+        return prc.chisq
 
     def _convert_aerosol_units(self, data, p_ref=1):
         """
@@ -173,18 +159,18 @@ class NemesisResult:
 
         # first, calculate the average molecular weight of the atmosphere
         masses = []
-        for gas in self.core.ref.data.columns:
+        for gas in self.core.reference.data.columns:
             if gas in ("height", "pressure", "temperature"):
                 continue
             g = gas.split(" ")[0] # ignore isotope weights
             m = constants.GASES.loc[constants.GASES["name"] == g, "molar_mass"].iloc[0]
             masses.append(m)
-        vmrs = self.core.ref.data.copy()
+        vmrs = self.core.reference.data.copy()
         x = vmrs.drop(columns=["height", "pressure", "temperature"])
         vmrs["mean_molar_wt"] = (x * masses).sum(axis=1)
 
         # then calculate the values at the target level
-        target = vmrs.loc[utils.find_nearest(self.core.ref.data["pressure"], p_ref)[0]]
+        target = vmrs.loc[utils.find_nearest(self.core.reference.data["pressure"], p_ref)[0]]
         pres = target["pressure"] * u.bar
         temp = target["temperature"] * u.K
         mol_wt = target["mean_molar_wt"] * u.g / u.mol
@@ -335,7 +321,7 @@ class NemesisResult:
             matplotlib.Axes: The Axes object onto which the data was plotted"""
 
         # Get the appropriate y axis data
-        y = self.core.ref.pressure if pressure else self.core.ref.height
+        y = self.core.reference.pressure if pressure else self.core.reference.height
         
         # Find retrieved temperature profile
         temp_profile = None
@@ -349,7 +335,7 @@ class NemesisResult:
 
         # If temperature profile not retrieved, plot the temperature profile in the .ref file
         if temp_profile is None:
-            ax.plot(self.core.ref.temp, y)
+            ax.plot(self.core.reference.temp, y)
 
         ax.set_xlabel("Temperature (K)")
 
@@ -444,7 +430,7 @@ class NemesisResult:
 
         # Get the appropriate y axes
         y = self.retrieved_gases["pressure"] if pressure else self.retrieved_gases["height"]
-        y2 = self.core.ref.data["pressure"] if pressure else self.core.ref.data["height"]
+        y2 = self.core.reference.data["pressure"] if pressure else self.core.reference.data["height"]
 
         # Get the prior distributions if requested
         if plot_prior_profiles:
@@ -471,7 +457,7 @@ class NemesisResult:
             if plot_retrieved_profiles:
                 ax.plot(self.retrieved_gases[gas_name]*scale, y, label=gas_name, c=c)
             if plot_ref_profiles:
-                ax.plot(self.core.ref.data[gas_name]*scale, y2, label=f"{gas_name} Reference", c=c, ls="dashed")
+                ax.plot(self.core.reference.data[gas_name]*scale, y2, label=f"{gas_name} Reference", c=c, ls="dashed")
             if plot_prior_profiles:
                 ax.plot(priors[gas_name]*scale, y3, label=f"{gas_name} Prior", c=c, ls="dotted")
 
@@ -512,6 +498,7 @@ class NemesisResult:
         fig, axs = plt.subplot_mosaic("AAA\nBBB\nCDE", 
                               gridspec_kw={"hspace": 0.25, "wspace": 0.35},
                               figsize=figsize)
+        axs["A"].sharex(axs["B"])
 
         self.plot_spectrum(ax=axs["A"], log=log)
         self.plot_spectrum_residuals(ax=axs["B"], log=log)
@@ -726,6 +713,88 @@ class SensitivityAnalysis:
         x.savefig(self.parent_directory / name, bbox_inches="tight", **kwargs)
 
 
+class GasAnalysis:
+    def __init__(self, parent_directory):
+        self.parent_directory = Path(parent_directory)
+        self.gas_index = pd.read_csv(self.parent_directory / "gasindex.csv", keep_default_na=False, na_values=['NaN'])
+        self.spectra = dict()
+        for _, (core_id, excluded_gas) in self.gas_index.iterrows():
+            r = NemesisResult(self.parent_directory / f"core_{core_id}")
+            self.spectra[excluded_gas] = r.retrieved_spectrum
+
+    def _get_biggest_contributors(self):
+        baseline = self.spectra["None"]
+        biggas = []
+        for i in range(len(baseline.wavelength)):
+            max_diff = 0
+            max_gas = None
+            for gas, spectrum in self.spectra.items():
+                if gas == "None":
+                    continue
+                diff = np.abs(spectrum.model.iloc[i] - baseline.model.iloc[i])
+                if diff > max_diff:
+                    max_diff = diff
+                    max_gas = gas
+            biggas.append(max_gas)
+        return biggas
+
+    @plotting
+    def plot_contributions_2D(self, ax):
+        ax.set_ylabel("Gas contribution (arb. units)")
+        reference_spectrum = self.spectra["None"]
+        for gas, spectrum in self.spectra.items():
+            if gas == "None":
+                continue
+            diff = spectrum.model - reference_spectrum.model
+            ax.plot(spectrum.wavelength, diff, label=gas)
+        ax.legend(ncols=2)
+
+    @plotting
+    def plot_contributions_3D(self, ax, normalise=False, log_scale=False, cmap="viridis"):
+        warnings.warn("not fully tested!")
+        diffs = []
+        reference_spectrum = self.spectra["None"]
+        for gas, spectrum in self.spectra.items():
+            if gas == "None":
+                continue
+            diff = np.clip(spectrum.model - reference_spectrum.model, 1e-20, np.inf)
+            if normalise:
+                diff /= np.nanmax(np.abs(diff))
+            diffs.append(diff)
+        if log_scale:
+            norm = mpl.colors.LogNorm(vmin=np.nanmax([np.nanmin(diffs), 1e-10]), vmax=np.nanmax(diffs))
+        else:
+            norm = None
+        ax.pcolormesh(spectrum.wavelength, range(len(diffs)), diffs, cmap=cmap, norm=norm)
+        ax.set_yticks(range(len(diffs)), labels=[gas for gas in self.spectra.keys() if gas != "None"])
+
+    @plotting
+    def plot_highlighted_spectrum(self, ax):
+        baseline = self.spectra["None"]
+        biggas = self._get_biggest_contributors()
+        ax.plot(baseline.wavelength, baseline.model, c='k', lw=1, marker="o")
+        ax.set_ylabel("Radiance\n(μW cm$^{-2}$ sr$^{-1}$ μm$^{-1}$)")
+        ylim = ax.get_ylim()
+
+        # Get unique gases and create a mapping to numeric indices
+        gas_to_index = {gas: i for i, gas in enumerate(set(biggas))}
+        
+        # Create gradient data - map each gas to its index
+        gradient = np.array([gas_to_index[gas] for gas in biggas]).reshape(1, -1)
+        gradient = np.vstack((gradient, gradient))
+        
+        # Create a colormap with unique colors for each gas
+        cmap = plt.cm.get_cmap('tab20', len(gas_to_index))
+        
+        # Add the gradient as background
+        ax.pcolormesh(baseline.wavelength, [0, 1], gradient, cmap=cmap, zorder=-1)
+    
+        # Create a legend
+        legend_elements = [mpl.patches.Patch(facecolor=cmap(i), label=gas) for gas, i in gas_to_index.items()]
+        ax.legend(handles=legend_elements, loc='upper right')
+    
+
+
 def load_multiple_cores(parent_directory, failed='warn'):
     """Read in all the cores in a given directory and return a list of NemesisResult objects.
     
@@ -766,37 +835,32 @@ def load_best_cores(parent_directory, n, failed='warn'):
     """
     
     parent_directory = Path(parent_directory)
+    best = []  # list of tuples: (chisq, core_directory)
 
-    dirs = [""]
-    chisqs = [float("inf")]
     for core_directory in parent_directory.glob("core_*"):
-        prc = parsers.NemesisPrc(core_directory / "nemesis.prc")
+        prc_path = core_directory / "nemesis.prc"
+
         try:
+            prc = parsers.NemesisPrc(prc_path)
             chisq = prc.chisq[-1]
-        except IndexError:
-            continue
-        if len(chisqs) < n:
-            dirs.append(core_directory)
-            chisqs.append(chisq)
-        elif chisq < max(chisqs):
-            i = np.argmax(chisqs)
-            dirs[i] = core_directory
-            chisqs[i] = chisq
-
-
-    chis, dirs = zip(*sorted(zip(chisqs, dirs)))
-
-    rs = []
-    for d in dirs:
-        try:
-            rs.append(NemesisResult(d))
-        except Exception as e:
-            if failed == "warn":
-                warnings.warn(f"Failed to load core {d}")
+        except (FileNotFoundError, IndexError, Exception) as e:
             if failed == "raise":
-                raise e
-            
-    return rs
+                raise
+            elif failed == "warn":
+                warnings.warn(f"Skipping {core_directory}: {e}")
+            continue
+
+        if len(best) < n:
+            best.append((chisq, core_directory))
+        else:
+            # replace worst if current is better
+            worst_idx = np.argmax([b[0] for b in best])
+            if chisq < best[worst_idx][0]:
+                best[worst_idx] = (chisq, core_directory)
+
+    best.sort(key=lambda x: x[0])
+    results = [NemesisResult(core_dir) for _, core_dir in best]
+    return results
 
 
 def load_parallelised_cores(parent_directory):

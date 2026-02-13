@@ -38,9 +38,6 @@ class NemesisCore:
         profiles (dict):               A dictionary of profiles.Profile objects to retrieve, where the keys are the profile labels and the values are the Profile objects themselves
         spectrum (parsers.NemesisSpx): The spectrum object to fit
         spectrum_filepath (Path):      The filepath to the spectrum .spx file
-
-        
-
         cia_file (Path):               The path to the collision-induced absorbtion file to use (default: mgRT_mgRV_40-400K_dnu4.0.tab, warning: always assumes d nu = 4.0)
         sol_file (Path):               The path to the solar spectrum file to use (default: solar_spec.dat)
         ref (parsers.NemesisRef):      The parsed ref file
@@ -1265,6 +1262,22 @@ class NemesisCore:
         
         return self.spectrum.wavelengths
 
+    def copy_core(self, new_parent_directory=None):
+        """Create a copy of the current core object with a new ID.
+        
+        Args:
+            new_parent_directory (pathlike): Optionally, specify a new parent directory for the copied core. 
+                If None then use the same parent directory as the original core.
+            
+        Returns:
+            NemesisCore: The copied core object"""
+        
+        new_core = copy.deepcopy(self)
+        if new_parent_directory is not None:
+            new_core.parent_directory = new_parent_directory
+        new_core.get_new_id()
+        return new_core
+
 
 class FixedPeak:
     """Used internally to specify if any spectral regions should be fixed so that NEMESIS always fits it there. Don't instantiate, instead use :meth:`~eleos.cores.NemesisCore.fix_peak`"""
@@ -1434,6 +1447,49 @@ def get_refractive_indicies(name, start_wl, end_wl, wl_step):
     return data
 
 
+def run_makephase(directory, 
+                  start_wl, end_wl, norm_wl, wl_step,
+                  profiles=list(),):
+    
+    directory = Path(directory)
+    directory.mkdir(parents=True, exist_ok=True)
+    
+    if isinstance(profiles, profiles_.AerosolProfile):
+        profiles = [profiles]
+
+    s = min(start_wl, norm_wl)
+    e = max(end_wl, norm_wl)
+    ni, n = utils.find_nearest(np.arange(s, e+wl_step, wl_step), norm_wl)
+
+    # Generate the makephase.inp file
+    with open(directory / "makephase.inp", mode="w+") as file:
+        file.write(str(len(profiles)) + "\n")
+        file.write("1\n")
+        utils.write_nums(file, s, e, wl_step)
+        file.write("nemesis\n")
+        file.write("y\n")
+
+        for profile in profiles:
+            if isinstance(profile, profiles_.AerosolProfile):
+                file.write(f"1\n{profile.radius} {profile.variance}\n2\n")
+                if not profile.lookup:
+                    file.write(f"1\n{profile.real_n} {profile.imag_n}\n")
+                else:
+                    file.write(f"{constants.MAKEPHASE_GASES[profile.n_lookup]}\n")
+            else:
+                raise ValueError("Only AerosolProfiles can be used.")
+
+    # Generate the normxsc.inp file
+    with open(directory / "normxsc.inp", mode="w+") as file:
+        file.write(f"nemesis.xsc\n{ni + 1} 1")
+
+    cwd = os.getcwd()
+    os.chdir(directory)
+    os.system("Makephase < makephase.inp > makephase.out")
+    os.system("Normxsc < normxsc.inp > normxsc.out")
+    os.chdir(cwd)
+
+
 # Core creation/loading functions
 def load_core(core_directory):
     """Load a NemesisCore object saved using NemesisCore._save_core. Do not use this to load a core that has been retrieved;
@@ -1579,7 +1635,7 @@ def create_sensitivity_analysis(parent_directory,
 
 
 def create_gas_analysis_cores(parent_directory, template_core, generate_cores=True, new_spx=None):
-    """Create a set of cores where each core has a single gas excluded. USeful for determining where in 
+    """Create a set of cores where each core has a single gas excluded. Useful for determining where in 
     the spectrum each gas contributes.
     
     Args:
@@ -1590,40 +1646,14 @@ def create_gas_analysis_cores(parent_directory, template_core, generate_cores=Tr
 
     Returns:
         List[NemesisCore]: A list of new cores with the gases excluded"""
-    
-    raise NotImplementedError("this needs changing to conform to the new ktable system")
-
-    def make_core(template_core, parent_directory, new_spx):
-        global CORE_ID_COUNTER
-        core = copy.deepcopy(template_core)
-        CORE_ID_COUNTER += 1
-        core.id_ = CORE_ID_COUNTER
-
-        core.parent_directory = Path(parent_directory)
-        core.directory = core.parent_directory / f"core_{core.id_}"
-        core.forward = True
-
-        if new_spx is not None:
-            core.spx_file = Path(new_spx)
-
-        return core
 
     clear_parent_directory(parent_directory)
     reset_core_numbering()
 
-    all_cores = [make_core(template_core, parent_directory, new_spx)]
-
-    names = template_core.get_ktable_gas_names()
-    for name in names:
-        core = make_core(template_core, parent_directory, new_spx)
-        core.exclude_gases(name)
-        all_cores.append(core)
-    
-    if generate_cores:
-        for core in all_cores:
-            core.generate_core()
+    for gas in template_core.use_gases:
+        print(gas)
         
-    return all_cores
+    return None
 
 
 def reset_core(core_directory):
@@ -1671,6 +1701,7 @@ def parallelise_forward(core, n_chunks=None, chunk_size=None, spx_save_dir=None)
     Returns:
         list[NemesisCore]: The cores to run in parallel
     """
+    raise NotImplementedError("This is broken for some reason")
     # check the core is running in forward mode
     assert core.forward
 

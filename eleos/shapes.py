@@ -59,7 +59,8 @@ def shapeclass(*args, **kwargs):
 class Shape:
     def __init__(self):
         """Do not instantiate directly, use a subclass"""
-        pass
+        self.CONSTANTS = []
+        self.VARIABLES = []
 
     def __repr__(self):
         return f"<Shape{self.ID}>"
