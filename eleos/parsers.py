@@ -1,6 +1,5 @@
 """This module provides parsing objects for reading some NEMESIS files, such as nemesis.ref"""
 
-from isort import file
 import pandas as pd
 import itertools as it
 import io
@@ -8,6 +7,7 @@ import numpy as np
 from pathlib import Path
 import astropy.units as u
 import struct
+import matplotlib.pyplot as plt
 
 import warnings
 warnings.formatwarning = lambda msg, *_: f"Warning: {msg}\n"
@@ -69,7 +69,7 @@ class NemesisRef(Parser):
 
         self.data = pd.read_table(self.filepath, 
                                   skiprows=3+extra_header+self.num_gases, 
-                                  sep="\s+", 
+                                  sep=r"\s+", 
                                   header=None)
         self.data.columns = ["height", "pressure", "temperature"] + self.gas_names
 
@@ -97,6 +97,7 @@ class NemesisMre(Parser):
     
     Attributes:
         ispec (int): Don't know
+        wavenumber (bool): Whether the spectrum is in wavenumber (cm-1) or wavelength (um) space
         ngeom (int): Number of geometries (should be 1)
         latitude (float): Latitude of the observation
         longitude (float): Longitude of the observation
@@ -128,11 +129,13 @@ class NemesisMre(Parser):
         # Set some attributes from the header info    
         self.ispec, self.ngeom, _,_,_ = self._parse_header_line(header[1], num_fields=5, cast_to=int)
         self.latitude, self.longitude = self._parse_header_line(header[2], num_fields=2, cast_to=float)
+        self.wavenumber = mre_data[3].strip().endswith("cm")
+        name = "wavenumber" if self.wavenumber else "wavelength"
 
         # Read in the fitted spectrum as a DataFrame
         self.retrieved_spectrum = pd.read_table(self.filepath, 
-                                                names=["wavelength", "measured", "error", "pct_error", "model", "pct_diff"],
-                                                index_col=0, sep="\s+", skiprows=5, nrows=blocks[0]-7)
+                                                names=[name, "measured", "error", "pct_error", "model", "pct_diff"],
+                                                index_col=0, sep=r"\s+", skiprows=5, nrows=blocks[0]-7)
 
         # Read in each retrieved parameter 
         self.retrieved_parameters = []
@@ -140,7 +143,7 @@ class NemesisMre(Parser):
         with open(self.filepath) as file:
             for start, end in it.pairwise(blocks):
                 data = utils.read_between_lines(file, start, end)
-                df = pd.read_table(io.StringIO(data), skiprows=4, sep="\s+", names=["i", "ix", "prior", "prior_error", "retrieved", "retrieved_error"])
+                df = pd.read_table(io.StringIO(data), skiprows=4, sep=r"\s+", names=["i", "ix", "prior", "prior_error", "retrieved", "retrieved_error"])
                 df.drop(["i", "ix"], axis=1, inplace=True)
                 self.initial_state_vector += list(df.prior)
                 self.retrieved_parameters.append(df)
@@ -206,6 +209,77 @@ class NemesisXsc(Parser):
 
         self.ssa.columns = ["wavelength"] + names
         self.xsc.columns = ["wavelength"] + names
+
+    def plot(self, ssa_ax=None, xsc_ax=None):
+        if ssa_ax is None or xsc_ax is None:
+            fig, (ssa_ax, xsc_ax) = plt.subplots(2,1, sharex=True)
+
+        for column in self.ssa.columns[1:]:
+            ssa_ax.plot(self.ssa.wavelength, self.ssa[column], label=str(column))
+            xsc_ax.plot(self.xsc.wavelength, self.xsc[column], label=str(column))
+
+        ssa_ax.set_xlabel("Wavelength (microns)")
+        ssa_ax.set_ylabel("Single Scattering Albedo")
+        xsc_ax.set_xlabel("Wavelength (microns)")
+        xsc_ax.set_ylabel("Extinction Coefficient")
+        ssa_ax.legend()
+        xsc_ax.legend()
+
+        return ssa_ax, xsc_ax
+
+
+class HGPhase(Parser):
+    """Parser for the HG phase function file
+    
+    Attributes:
+        hg (DataFrame): DataFrame containing f, g1, and g2 as a function of wavelength"""
+    
+    def read(self):
+        data = pd.read_table(self.filepath, sep=r"\s+", header=None)
+        data.columns = ["wavelength", "f", "g1", "g2"]
+        self.hg = data
+
+    def plot(self, f_ax=None, g1_ax=None, g2_ax=None):
+        if f_ax is None or g1_ax is None or g2_ax is None:
+            fig, (f_ax, g1_ax, g2_ax) = plt.subplots(3,1, sharex=True)
+
+        f_ax.plot(self.hg.wavelength, self.hg.f, label=self.filepath.name)
+        g1_ax.plot(self.hg.wavelength, self.hg.g1, label=self.filepath.name)
+        g2_ax.plot(self.hg.wavelength, self.hg.g2, label=self.filepath.name)
+        
+        f_ax.set_ylabel("f")
+        g1_ax.set_ylabel("g1")
+        g2_ax.set_ylabel("g2")
+        g2_ax.set_xlabel("Wavelength (microns)")
+
+        f_ax.legend()
+        g1_ax.legend()
+        g2_ax.legend()
+
+        return f_ax, g1_ax, g2_ax
+    
+    def plot_phase(self, wavelength, ax=None):
+
+        def hg(theta, g):
+            return 1/(4*np.pi) * (1 - g**2) / (1 + g**2 - 2*g*np.cos(theta))**(3/2)
+        
+        def double_hg(theta, f, g1, g2):
+            return f*hg(theta, g1) + (1-f)*hg(theta, g2)
+        
+        if ax is None:
+            fig = plt.figure()
+            ax = plt.subplot(111, projection="polar")
+        
+        theta = np.linspace(0, 2*np.pi, 500)
+        i, wl = utils.find_nearest(self.hg.wavelength, wavelength)
+        f = self.hg.f.iloc[i]
+        g1 = self.hg.g1.iloc[i]
+        g2 = self.hg.g2.iloc[i]
+        phase = double_hg(theta, f, g1, g2)
+        ax.plot(theta, phase, label=f"{self.filepath.name} at {wl:.2f}um")
+        ax.legend()
+
+        return ax
 
 
 class NemesisItr(Parser):
@@ -274,7 +348,11 @@ class NemesisPrc(Parser):
         with open(self.filepath) as file:
             for line in file:
                 if "chi" in line and "should" not in line:
-                    self.chisq.append(utils.get_floats_from_string(line)[0])
+                    fs = utils.get_floats_from_string(line)
+                    if len(fs) == 0:
+                        self.chisq.append(np.nan)
+                    else:
+                        self.chisq.append(fs[0])
     
     def write_chisqs(self, filepath):
         with open(filepath, mode="w+") as file:
@@ -283,7 +361,8 @@ class NemesisPrc(Parser):
 
 
 class NemesisSpx(Parser):
-    """Parser for the nemesis.spx file
+    """
+    Parser for the nemesis.spx file
 
     Attributes:
         lat (float):              Latitude of the observation
@@ -398,7 +477,7 @@ class NemesisSpx(Parser):
 
         Returns:
             NemesisSpx: A new instance populated with the given spectral and geometric data.
-"""
+        """
         spx = cls.__new__(cls)
         if convert:
             spx.spectrum = NemesisSpx.convert_MJysr_to_Wcm2srum(wavelengths, spectrum)
@@ -570,7 +649,7 @@ class AerosolRef(Parser):
         return ref
     
     def read(self):
-        self.data = pd.read_table(self.filepath, sep="\s+", skiprows=2, header=None)
+        self.data = pd.read_table(self.filepath, sep=r"\s+", skiprows=2, header=None)
         self.num_modes = len(self.data.columns) - 1
         header = ["height"] + [f"aerosol_{x}" for x in range(1, self.num_modes+1)]
         self.data.columns = header
@@ -607,7 +686,7 @@ class ParaH2Ref(Parser):
         super().__init__(filepath)
 
     def read(self):
-        self.data = pd.read_table(self.filepath, sep="\s+", skiprows=1, header=None)
+        self.data = pd.read_table(self.filepath, sep=r"\s+", skiprows=1, header=None)
         header = ["height", "parah2_fraction"]
         self.data.columns = header
 
@@ -690,7 +769,7 @@ class kTable(Parser):
 
 class PsgSpectrum(Parser):
     def read(self):
-        self.data = pd.read_csv(self.filepath, comment="#", header=None, sep="\s+")
+        self.data = pd.read_csv(self.filepath, comment="#", header=None, sep=r"\s+")
         self.data.columns = ["wavelength", "spectrum", "drop"]
         self.data.drop(["drop"], axis=1, inplace=True)
 

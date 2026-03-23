@@ -27,7 +27,8 @@ dependencies = [
     "planetmapper",
     "h3ppy",
     "emcee",
-    "h5py"
+    "h5py",
+    "schwimmbad",
 ]
 
 [project.urls]

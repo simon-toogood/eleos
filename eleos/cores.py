@@ -607,7 +607,7 @@ class NemesisCore:
             
         Creates:
             parah2.ref"""
-        df = pd.read_table(constants.PATH / f"data/{self.planet}/parah2.ref", skiprows=1, header=None, sep="\s+")
+        df = pd.read_table(constants.PATH / f"data/{self.planet}/parah2.ref", skiprows=1, header=None, sep=r"\s+")
         df.columns = ["height", "parah2"]
         minh, maxh = self.get_height_limits()
         df = df[(df.height >= minh) & (df.height <= maxh)]
@@ -1744,6 +1744,13 @@ def reset_core_numbering():
         None"""
     global CORE_ID_COUNTER
     CORE_ID_COUNTER = 0
+
+
+def renumber_cores(cores):
+    reset_core_numbering()
+    for core in cores:
+        core.get_new_id()
+    return cores
 
 
 def clear_parent_directory(parent_directory, confirm=True):

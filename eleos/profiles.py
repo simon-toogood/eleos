@@ -305,7 +305,9 @@ class AerosolProfile(Profile):
                  variance_error=None,
                  imag_n_error=None,
                  label=None):
-        """Create a profile for an aerosol layer with a given shape and particle/optical properties. Call signatures:
+        """Create a profile for an aerosol layer with a given shape and particle/optical properties.
+         
+        Call signatures:
 
         Constant refractive index over range (not retrieved):
         AerosolProfile(shape, radius, variance, real_n, imag_n)
@@ -326,7 +328,7 @@ class AerosolProfile(Profile):
             label (str): A label to associate with this Profile. By default it is "Aerosol <aerosol_id>" (eg. "Aerosol 1")       
             shape (Shape): A Shape object that describes the profile shape
             radius (float): Particle radius in microns
-            variance (float): iance of the particle size distribution in microns (gamma distribution)
+            variance (float): Variance of the particle size distribution in microns (gamma distribution)
             n_lookup (str): If given, use the refractive indicies of this gas (eg. 'CH4')
             real_n (float): If n_lookup is not given, then use this as the real part of the refractive index
             imag_n (float): If n_lookup is not given, then use this as the imaginary part of the refractive index,

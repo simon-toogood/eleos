@@ -8,9 +8,6 @@ import time
 import shutil
 import numpy as np
 from pathlib import Path
-from mpi4py import MPI
-
-from . import cores
 
 
 class Parameter:
