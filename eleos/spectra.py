@@ -1,21 +1,20 @@
+import copy
+import glob
+import warnings
+from collections import defaultdict
+
+import astropy.units as u
+import h3ppy
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
-import glob
-import h3ppy
 import planetmapper
-import copy
-import warnings
 from astropy.io import fits
-from collections import defaultdict
-from scipy.optimize import curve_fit
-import matplotlib.pyplot as plt
 from scipy.interpolate import interp1d
+from scipy.optimize import curve_fit
 from scipy.signal import fftconvolve
-from pprint import pprint
 
-from . import utils
-from . import spx
-from . import constants
+from . import constants, utils
 
 
 def margin_trim(cube, margin_size=3):
@@ -39,6 +38,23 @@ def margin_trim(cube, margin_size=3):
     cube[:, :, -margin_size:] = np.nan
 
     return cube
+
+
+def convert_MJysr_to_Wcm2srum(wavelengths, spectrum):
+    spx_MJysr = spectrum * u.MJy / u.sr
+    spx_Wcm2srum = spx_MJysr.to(
+        u.W / (u.cm * u.cm) / u.sr / u.micron,
+        equivalencies=u.spectral_density(wavelengths * u.micron))
+    return spx_Wcm2srum.value
+
+        
+def convert_Wcm2srum_to_MJysr(wavelengths, spectrum):
+    spx_Wcm2srum = spectrum * u.W / (u.cm * u.cm) / u.sr / u.micron
+    spx_MJysr = spx_Wcm2srum.to(
+        u.MJy / u.sr,
+        equivalencies=u.spectral_density(wavelengths * u.micron),
+    )
+    return spx_MJysr.value
 
 
 def downsample_spectrum(wavelengths, spectrum, errors=None, num_points=100, special_regions=None):
@@ -91,6 +107,112 @@ def downsample_spectrum(wavelengths, spectrum, errors=None, num_points=100, spec
     return wavelengths[final_indices], spectrum[final_indices]
 
 
+
+import numpy as np
+
+def downsample_regions(
+    wavelengths,
+    spectrum,
+    errors=None,
+    base_resolution='full',
+    regions=None
+):
+    """Downsample a spectrum using wavelength intervals (Δλ).
+
+    Args:
+        wavelengths: Wavelength array.
+        spectrum: Spectral data array.
+        errors: Optional error array.
+        base_resolution: Wavelength spacing outside specified regions,
+                         or 'full' to retain all points.
+        regions: Dict of {(start, end): resolution}, where resolution
+                 is the wavelength spacing, or 'full'.
+
+    Returns:
+        Trimmed wavelengths, spectrum and optionally errors.
+    """
+
+    wavelengths = np.asarray(wavelengths)
+    spectrum = np.asarray(spectrum)
+
+    if errors is not None:
+        errors = np.asarray(errors)
+
+    selected_indices = set()
+    regions = regions or {}
+
+    # Identify all points belonging to special regions
+    region_mask = np.zeros(len(wavelengths), dtype=bool)
+
+    for (start, end), resolution in regions.items():
+        mask = (wavelengths >= start) & (wavelengths <= end)
+        region_mask |= mask
+
+        indices = np.where(mask)[0]
+
+        if resolution == 'full':
+            selected_indices.update(indices)
+        else:
+            if resolution <= 0:
+                raise ValueError("Resolution must be positive.")
+
+            if len(indices):
+                target_wavelengths = np.arange(
+                    wavelengths[indices[0]],
+                    wavelengths[indices[-1]] + resolution,
+                    resolution
+                )
+
+                selected = np.searchsorted(
+                    wavelengths[indices],
+                    target_wavelengths
+                )
+
+                selected = np.clip(selected, 0, len(indices) - 1)
+                selected = np.unique(selected)
+
+                selected_indices.update(indices[selected])
+
+    # Downsample outside specified regions
+    if base_resolution != 'full':
+        if base_resolution <= 0:
+            raise ValueError("Base resolution must be positive.")
+
+        base_indices = np.where(~region_mask)[0]
+
+        if len(base_indices):
+            target_wavelengths = np.arange(
+                wavelengths[base_indices[0]],
+                wavelengths[base_indices[-1]] + base_resolution,
+                base_resolution
+            )
+
+            selected = np.searchsorted(
+                wavelengths[base_indices],
+                target_wavelengths
+            )
+
+            selected = np.clip(selected, 0, len(base_indices) - 1)
+            selected = np.unique(selected)
+
+            selected_indices.update(base_indices[selected])
+
+    else:
+        selected_indices.update(np.where(~region_mask)[0])
+
+    final_indices = np.array(sorted(selected_indices), dtype=int)
+
+    if errors is not None:
+        return (
+            wavelengths[final_indices],
+            spectrum[final_indices],
+            errors[final_indices]
+        )
+
+    return wavelengths[final_indices], spectrum[final_indices]
+
+
+
 def resample_to_new(wavelength_source, spectrum_source, wavelength_target, kind="linear", fill_value="extrapolate"):
     """Resample a spectrum onto a new wavelength grid via interpolation.
 
@@ -120,7 +242,7 @@ def resample_to_new(wavelength_source, spectrum_source, wavelength_target, kind=
     return interp_func(wavelength_target)
 
 
-def wavelength_select(wavelengths, spectrum, errors=None, min_wl=None, max_wl=None, epsilon=0):
+def select_wavelengths(wavelengths, spectrum, errors=None, min_wl=None, max_wl=None, epsilon=0):
     """Select a range of wavelengths from a spectrum.
     
     Args:
@@ -196,11 +318,11 @@ def subtract_h3p(wavelengths, spectrum, latitude=-60, region=(3.525, 3.55), retu
     spectrum = copy.deepcopy(spectrum) * 10000 # Convert to W/m2/sr/um
     nanmask = np.isnan(spectrum)
     spectrum = interpolate_nans(wavelengths, spectrum)
-    w, s = wavelength_select(wavelengths, spectrum, min_wl=region[0], max_wl=region[1])
+    w, s = select_wavelengths(wavelengths, spectrum, min_wl=region[0], max_wl=region[1])
 
     h3p = h3ppy.h3p()
     h3p.set(**h3p_kwargs, wave=w, data=s)
-    h3p.guess_density()
+    h3p.guess_density(verbose=False)
     fit = h3p.fit(verbose=False)
     h3p.set(wave=wavelengths)
     h3p_pred = h3p.model(background_0=0)
@@ -243,7 +365,7 @@ def subtract_ch4(wavelengths, spectrum, nlines=25, linewidth=0.008, A0=1e-6, lin
             print("fail")
             return
         
-        w, s = wavelength_select(wavelengths, 
+        w, s = select_wavelengths(wavelengths, 
                                  spectrum, 
                                  min_wl=line - linewidth/1.5, 
                                  max_wl=line + linewidth/1.5)
@@ -425,7 +547,7 @@ def zonal_average_tiles(filepaths, lat_width, error_scale=1, rmsd_threshold=10, 
     return obs.get_wavelengths_from_header(), zonal
 
 
-def groupby(filepaths, by="EMISSION", binsize=2, binstart=0, binend=90, rmsd_threshold=10, filters=None):
+def groupby(filepaths, by="EMISSION", binsize=2, binstart=0, binend=90, rmsd_threshold=10, filters=None,):
     """Group spaxels from a set of JWST navigated cubes by a given backplane value.
     
     Args:
@@ -447,6 +569,8 @@ def groupby(filepaths, by="EMISSION", binsize=2, binstart=0, binend=90, rmsd_thr
         for key, lists in data.items():
             # Flatten all nested lists into one
             flat = [x for sub in lists for x in sub]
+            if isinstance(key, str):
+                continue
             result[key] = sum(flat) / len(flat)
         return result
 
@@ -505,10 +629,18 @@ def groupby(filepaths, by="EMISSION", binsize=2, binstart=0, binend=90, rmsd_thr
             
             # Iterate over each unique wavelength grid (ie. each filter/grating combination)
             n = 0
+            n_reject = 0
             for wl, ddf in filtergrouped:
                 print(f"Processing {name} group starting at {wl:2f} um with {len(ddf)} spaxels")
                 n += len(ddf)
 
+                # save spaxel coords to a file
+                print(ddf.columns)
+                with open(f"spaxel_coords.txt", "a+") as f:
+                    # write only some columns to the file
+                    f.write(f"\n{name.left} {name.right} {wl}\n")
+                    ddf[["tile", "PIXEL-X", "PIXEL-Y"]].to_csv(f, header=False, index=False)
+                    
                 # Calculate group median
                 spectra = np.stack(ddf["spectrum"].values)
                 median = np.nanmedian(spectra, axis=0)
@@ -518,22 +650,33 @@ def groupby(filepaths, by="EMISSION", binsize=2, binstart=0, binend=90, rmsd_thr
                     print("Skipping all-nan bin")
                     continue
 
-                # Caclulate rmsd and remove outliers
+                # Calculate rmsd and remove outliers
                 ddf["rmsd"] = np.sqrt(np.nanmean((spectra - median)**2, axis=1))
-                filtered_ddf = ddf.drop(ddf[(ddf.rmsd > np.percentile(ddf.rmsd, 100-rmsd_threshold))].index)
-                print(f"Rejected {len(ddf) - len(filtered_ddf)} outliers out of {len(ddf)} spaxels")
+                filtered_ddf = ddf.drop(ddf[(ddf.rmsd > np.nanpercentile(ddf.rmsd, 100-rmsd_threshold))].index)
+                rejects = len(ddf) - len(filtered_ddf)
+                n_reject += rejects
+                print(f"Rejected {rejects} outliers out of {len(ddf)} spaxels")
                     
                 # Add to list of spectra to combine multiple gratings
-                wls.append(ddf.iloc[0].wavelength)
+                wls.append(filtered_ddf.iloc[0].wavelength)
                 spec.append(np.nanmean(np.stack(filtered_ddf["spectrum"].values), axis=0))
                 errs.append(np.nanstd(np.stack(filtered_ddf["error"].values), axis=0))
                 for col in [x for x in df.columns if x not in ["wavelength", "spectrum", "error", "_wl_key"]]:
-                    extras[col].append(list(ddf[col]))
+                    extras[col].append(list(filtered_ddf[col]))
+
+        if len(wls) == 0:
+            continue
 
         # Combine the multiple filter/grating combinations
         w,s,e = combine_multiple_spectra(*zip(wls, spec, errs))
         extra = average_dict(extras)
-        out = pd.concat([out, pd.DataFrame([{"wavelength":w, "spectrum":s, "error":e, "num_spaxels":n} | extra], index=[name.mid])])
+        out = pd.concat([out, pd.DataFrame(
+            [{"wavelength":w, 
+              "spectrum":s, 
+              "error":e,
+              "num_spaxels":n,
+              "num_rejected":n_reject} | extra], 
+              index=[name.mid])])
 
     
     return out
@@ -568,6 +711,7 @@ def flatten_tiles(filepaths):
         df["wavelength"] = [wavelength] * spectra.shape[0]
         df["spectrum"] = spectra.tolist()
         df["error"] = errors.tolist()
+        df["tile"] = str(tile)
 
         for backplane in obs.backplanes.keys():
             df[backplane] = obs.get_backplane_img(backplane).flatten()
@@ -681,7 +825,7 @@ def get_single_spectra(file_pattern,
 
     w = wavelengths
     s = multiple_cube_average(cubes)
-    s, w = wavelength_select(w, s, min_wl=min_wl, max_wl=max_wl)
+    s, w = select_wavelengths(w, s, min_wl=min_wl, max_wl=max_wl)
 
     if num_points is not None:
         s, w = downsample_spectrum(s, w, num_points=num_points)
@@ -807,7 +951,6 @@ def convolve_gaussian(wavelength, data, R, lambda0):
     kernel = np.exp(-(x**2) / (2 * sigma**2))
     kernel /= kernel.sum()  # normalize so area = 1
 
-    # Convolve using FFT for efficiency
     convolved = fftconvolve(data, kernel, mode='same')
 
     return convolved

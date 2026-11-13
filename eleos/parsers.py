@@ -6,6 +6,7 @@ import io
 import numpy as np
 from pathlib import Path
 import astropy.units as u
+import shutil
 import struct
 import matplotlib.pyplot as plt
 
@@ -16,6 +17,7 @@ from . import utils
 from . import constants
 from . import profiles as profiles_
 from . import shapes
+from . import spectra
 
 
 ## TODO: Move all parsing routines here, .itr, .prc etc...
@@ -73,15 +75,16 @@ class NemesisRef(Parser):
                                   header=None)
         self.data.columns = ["height", "pressure", "temperature"] + self.gas_names
 
-    def write(self, filepath):
+    def write(self, filepath=None):
         """Write the object to a new .ref file
 
         Args:
-            filepath (str): Path to the new .ref file
+            filepath (str): Path to the new .ref file. If None, then overwrites the existing file.
         
         Returns:
             None
         """
+        filepath = self.filepath if filepath is None else filepath
         out = f"1\n{self.amform}\n{self.planet_id} {self.latitude} {self.num_layers} {self.num_gases}\n"
         for gas_name in self.gas_names:
             name, isotopologue = gas_name.split(" ")
@@ -294,7 +297,7 @@ class NemesisItr(Parser):
                 fp = Path(filepath).parent / "nemesis.mre"
                 self.mre = NemesisMre(fp)
             except:
-                print("Warning: Failed to load {fp}, skipping state vector linearisation")
+                warnings.warn("Failed to load {fp}, skipping state vector linearisation")
                 self.mre = None
         else:
             self.mre = mre
@@ -404,12 +407,14 @@ class NemesisSpx(Parser):
                 self.spectrum[i] = s
                 self.error[i] = e
 
-    def write(self, filepath, exclude_nans=True):
+    def write(self, filepath=None, exclude_nans=True):
         """
         Write an SPX file to disk
 
         Args:
-            filepath (str): The filepath of the new .spx file
+            filepath (str): The filepath of the new .spx file. If None, then overwrites the existing file.
+            exclude_nans (bool): Whether to exclude NaN values from the output file. If True, only wavelengths 
+                                 where both the spectrum and error are not NaN will be included in the output. Defaults to True.
 
         Returns:
             None
@@ -429,12 +434,18 @@ class NemesisSpx(Parser):
         if np.max(self.spectrum) > 1e-4:
             warnings.warn(f"This spectrum looks extremely bright (max value {np.max(self.spectrum)}) - have you converted from MJy/sr to W/cm2/sr/um?")
 
-        for w, s, e in zip(self.wavelengths[mask], self.spectrum[mask], self.error[mask]):
+        for i, (w, s, e) in enumerate(zip(self.wavelengths[mask], self.spectrum[mask], self.error[mask])):
+            if e == 0:
+                warnings.warn(f"Zero encountered in spectrum errors at {w} um - interpolating")
+                e = (self.error[mask][i-1] + self.error[mask][i-1]) / 2
             lines.append(f'{w: 12f}  {s: 12e}  {e: 12e}')
         lines.append('')  # end file with a newline
 
         with open(filepath, 'w') as f:
             f.write('\n'.join(lines))
+
+    def __len__(self):
+        return len(self.wavelengths)
 
     @property
     def wavelength(self):
@@ -458,7 +469,7 @@ class NemesisSpx(Parser):
                    spectrum, 
                    error, 
                    lat, lon, phase, emission, azimuth, fwhm=0,
-                   convert=True):
+                   convert=False):
         """Create a new NemesisSpx object from three lists (wavelength, spectrum, errors) and a set of parameters (lat, lon etc...)
         See also: `NemesisSpx.get_angles()`
 
@@ -520,44 +531,57 @@ class NemesisSpx(Parser):
             "azimuth": self.azimuth
         }
 
-    @staticmethod
-    def convert_MJysr_to_Wcm2srum(
-        wavelengths: np.ndarray,
-        spectrum: np.ndarray,
-    ) -> np.ndarray:
-        """
-        Convert a spectrum or cube from MJy/sr to W/cm2/sr/micron.
-        """
-        while len(wavelengths.shape) < len(spectrum.shape):
-            # work for cubes passed to sp
-            wavelengths = np.expand_dims(wavelengths, -1)
-
-        spx_MJysr = spectrum * u.MJy / u.sr
+    def convert_MJysr_to_Wcm2srum(self):
+        spx_MJysr = self.spectrum * u.MJy / u.sr
         spx_Wcm2srum = spx_MJysr.to(
             u.W / (u.cm * u.cm) / u.sr / u.micron,
-            equivalencies=u.spectral_density(wavelengths * u.micron),
-        )
-
-        return spx_Wcm2srum.value
-
-    @staticmethod
-    def convert_Wcm2srum_to_MJysr(
-        wavelengths: np.ndarray,
-        spectrum: np.ndarray,
-    ) -> np.ndarray:
-        """
-        Convert a spectrum or cube from W/cm2/sr/micron to MJy/sr.
-        """
-        while len(wavelengths.shape) < len(spectrum.shape):
-            # work for cubes passed to sp
-            wavelengths = np.expand_dims(wavelengths, -1)
-
-        spx_Wcm2srum = spectrum * u.W / (u.cm * u.cm) / u.sr / u.micron
+            equivalencies=u.spectral_density(self.wavelengths * u.micron))
+        return spx_Wcm2srum
+        
+    def convert_Wcm2srum_to_MJysr(self):
+        spx_Wcm2srum = self.spectrum * u.W / (u.cm * u.cm) / u.sr / u.micron
         spx_MJysr = spx_Wcm2srum.to(
             u.MJy / u.sr,
-            equivalencies=u.spectral_density(wavelengths * u.micron),
+            equivalencies=u.spectral_density(self.wavelengths * u.micron),
         )
         return spx_MJysr.value
+
+    def convert_Wcm2srum_to_Tb(self):
+        warnings.warn("Conversion to brightness temperature untested.")
+        spx_Wcm2srum = self.spectrum * u.W / (u.cm * u.cm) / u.sr / u.micron
+        spx_Tb = spx_Wcm2srum.to(
+            u.K,
+            equivalencies=u.thermodynamic_temperature(self.wavelengths * u.micron),
+        )
+        return spx_Tb.value
+
+    def downsample_spectrum(self, num_points=100, special_regions=None):
+        self.wavelengths, self.spectrum, self.error = spectra.downsample_spectrum(self.wavelengths, self.spectrum, self.error, num_points=num_points, special_regions=special_regions)
+
+    def downsample_regions(self, base_resolution='full', regions=dict()):
+        self.wavelengths, self.spectrum, self.error = spectra.downsample_regions(self.wavelengths, self.spectrum, self.error, base_resolution=base_resolution, regions=regions)
+
+    def select_wavelengths(self, min_wl, max_wl, epsilon=0):
+        self.wavelengths, self.spectrum, self.error = spectra.select_wavelengths(self.wavelengths, self.spectrum, self.error, min_wl, max_wl, epsilon=epsilon)
+
+    def convolve_gaussian(self, R, lambda0):
+        self.spectrum = spectra.convolve_gaussian(self.wavelengths, self.spectrum, R, lambda0)
+        self.error = spectra.convolve_gaussian(self.wavelengths, self.error, R, lambda0)
+
+    def scale_errors(self, factor=40, max_pct=0.5):
+        self.error *= factor
+        mask = self.error > (self.spectrum * max_pct)
+        self.error[mask] = self.spectrum[mask] * max_pct
+
+    @utils.plotting
+    def plot(self, ax, **kwargs):
+        ax.plot(self.wavelengths, self.spectrum, label=self.filepath, **kwargs)
+        ax.fill_between(self.wavelengths, self.spectrum - self.error, self.spectrum + self.error, alpha=0.3, **kwargs)
+        ax.set_xlabel("Wavelength")
+        ax.set_ylabel("Radiance")
+
+    def _show(self):
+        plt.show()
 
 
 class NemesisInp(Parser):
@@ -591,9 +615,10 @@ class NemesisInp(Parser):
 
 
 class MakephaseOut(Parser):
-    def __init__(self, filepath):
+    def __init__(self, filepath, add_aerosol_names=True):
         super().__init__(filepath)
-        self.add_aerosol_names()
+        if add_aerosol_names:
+            self.add_aerosol_names()
 
     def read(self):
         xsc = NemesisXsc(Path(self.filepath).parent / "nemesis.xsc")
@@ -661,19 +686,31 @@ class AerosolRef(Parser):
                 return
             self.data.columns = ["height"] + names
 
-    def write(self, filepath):
+    def write(self, filepath=None):
         """Write the data in the object to a new aerosol.ref file
 
         Args:
-            filepath (str): The filepath to the new aerosol.ref file
+            filepath (str): The filepath to the new aerosol.ref file. If None, overwite the existing
 
         Returns:
             None
         """
+        filepath = self.filepath if filepath is None else filepath
         out = f"# Generated by Eleos\n{len(self.data)} {len(self.data.columns)-1}\n"
         out += self.data.to_string(header=None, index=None)
         with open(filepath, mode="w+") as file:
             file.write(out)
+
+    @utils.plotting_altitude
+    def plot(self, ax, pressure, **kwargs):
+        for column in self.data.columns:
+            if column in ("height", "pressure"):
+                continue
+            ax.plot(self.data[column], self.data.pressure, label=column, **kwargs)
+        ax.set_xlabel("Aerosol Density")
+        ax.set_ylabel("Pressure (bar)")
+        ax.set_xscale("log")
+        ax.legend()
 
 
 class ParaH2Ref(Parser):
@@ -791,4 +828,78 @@ class NemesisCov(Parser):
 
         sa = [utils.get_floats_from_string(lines[start + i]) for i in range(nx)]
         self.sa = np.array(sa)
- 
+
+
+class NemesisSol(Parser):
+    """Parser for nemesis.sol (solar spectrum file). It can handle either a file with
+    a single line pointing to a raddata file or a file with the actual solar spectrum data.
+    
+    Attributes:
+        wavelength (bool): Whether the spectrum is in wavelength or wavenumber space
+        sun_radius (float): Radius of the sun in km
+        header (str): Header of the file
+        data (pd.DataFrame): DataFrame containing the solar spectrum with columns "wavelength" and "flux"
+    """
+
+    def read(self):
+        with open(self.filepath) as f:
+            lines = f.readlines()
+            if len(lines) <= 2:
+                # Assume this is a raddata file
+                raddata_path = constants.NEMESIS_PATH / "radtrancode/raddata" / Path(lines[0].strip())
+                with open(raddata_path) as f:
+                    self._read_raw_data(f.readlines())
+                self.alias = raddata_path
+            else:
+                # Assume this is a file with the actual solar spectrum data
+                self._read_raw_data(lines)
+                self.alias = False
+
+    def _read_raw_data(self, lines):
+        count = 0
+        header = []
+        data = []
+        for line in lines:
+            if line.startswith("#"):
+                header.append(line)
+                continue
+            elif count == 0:
+                self.wavelength = bool(int(line))
+            elif count == 1:
+                self.sun_radius = float(line)
+            else:
+                data.append(utils.get_floats_from_string(line))
+            count += 1
+        self.header = "".join(header)
+        self.data = pd.DataFrame(data, columns=["wavelength", "flux"])
+
+    def write(self, filepath=None):
+        """Write the new solar spectrum to a file. If this is an alias, modify the original file and leave the
+        alias unchanged.
+
+        Args:
+            filepath (str): Filepath to save the new solar spectrum. If None, then overwrites the existing file.
+        """
+        fp = self.filepath if filepath is None else Path(filepath)
+
+        out = self.header + f"{int(self.wavelength)}\n{self.sun_radius}\n"
+        out += self.data.to_string(index=False, header=False)
+
+        if self.alias and filepath is None:
+            savepath = constants.NEMESIS_PATH / "radtrancode/raddata" / self.alias
+        elif self.alias and filepath is not None:
+            savepath = constants.NEMESIS_PATH / "radtrancode/raddata" / filepath.name
+        else:
+            savepath = filepath
+
+        with open(savepath, mode="w+") as file:
+            file.write(out)      
+
+    def write_alias(self, filepath, add_to_raddata=False):
+        """Create a nemesis.sol file containing a filename in raddata"""
+        with open(filepath, mode="w+") as file:
+            file.write(self.filepath.name)
+
+        if add_to_raddata:
+            raddata_dir = constants.NEMESIS_PATH / "radtrancode/raddata"                
+            shutil.copy(filepath, raddata_dir / self.filepath.name)

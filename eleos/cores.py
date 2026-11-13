@@ -4,7 +4,9 @@ import time
 import sys
 import signal
 import os
+import hashlib
 import shutil
+import glob
 import struct
 import re
 import copy
@@ -12,6 +14,7 @@ import subprocess
 import functools
 from pathlib import Path, PurePath
 import pandas as pd
+from tqdm import tqdm
 import numpy as np
 
 import warnings
@@ -22,6 +25,7 @@ from . import parsers
 from . import utils
 from . import profiles as profiles_ # to avoid namespace shadowing by NemesisCore.profiles
 from . import results
+from . import mcmc
 
 
 # if modifying this yourself: increment, then assign!
@@ -65,8 +69,8 @@ class NemesisCore:
                  spectrum, 
                  reference=None, 
                  aerosols=None,
+                 solar_spectrum=None,
                  cia_file=None,
-                 sol_file=None,
                  profiles=list(), 
                  planet="jupiter", 
                  scattering=True, 
@@ -80,35 +84,35 @@ class NemesisCore:
                  sparsify_ktables=False,
                  fmerror_factor=None,
                  fmerror_pct=None,
-                 fmerror_value=None,
+                 fmerror_value=0,
                  cloud_cover=1.0,
                  reference_wavelength=None):
         
         """Create a NEMESIS core directory with a given set of profiles to retrieve
         
         Args:
-            parent_directory (str):        The directory in which to create the core folder 
-            spectrum (str or NemesisSpx):  Either the path to the .spx file to fit or a parsers.NemesisSpx object
-            reference (str or NemesisRef): Either the path to the nemesis.ref file to use or a parsers.NemesisRef object
-            aerosols (str or AerosolRef):  Either the path to the aerosol.ref file to use or a parsers.AerosolRef object
-            cia_file (str):                Path to the collision-indced absorbtion file to use
-            sol_file (str):                Path to the solar spectrum file to use
-            profiles List[str]:            List of profiles.Profile objects to retrieve
-            planet (str):                  Name of the planet being observed. Must be one of 'jupiter', 'saturn', 'uranus', 'neptune' or 'titan'.
-            scattering (bool):             Whether to run a scattering retrieval or not
-            forward (bool):                Whether of not to run a forward model (ie. set number of iterations = 0)
-            num_iterations (int):          Number of iterations to run in the retrieval (if forward is set this has no effect)
-            num_layers (int):              The number of atmospheric layers to simulate - for scattering runs the default maximum is 39.
-            min_pressure (float):          The pressure at the top of the model atmosphere
-            max_pressure (float):          The pressure at the bottom of the model atmosphere
-            instrument_ktables (str):      Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use.
-            use_gases (list):              A list of the gases to use in the model, with names corresponding the to ktable names (eg. "ch4.combi.kta" would be ["ch4"])
-            sparsify_ktables (bool):       Whether to reduce the number of wavelengths in the ktables to only those that are required (may significantly speed up computation)
-            fmerror_factor (float):        The factor by which to multiply the error on the spectrum (see also, fmerror_pct and fmerror_value)
-            fmerror_pct (float):           If given, instead of using fmerror_factor or fmerror_value, use a flat percentage of the brightness (eg. 0.1 = 10%) (see also, fmerror_factor and fmerror_value)
-            fmerror_value (float):         If given, instead of using fmerror_factor or fmerror_pct, use a flat value in W/cm2/sr/um (see also, fmerror_factor and fmerror_pct)
-            cloud_cover (bool):            If scattering mode is on, then this is the fractional cloud cover between 0 and 1 (usually doesn't need to be changed)
-            reference_wavelength (float):  If scattering mode is on, then normalise the cross-sections at the closest wavelength to this value in the .xsc file. This parameter will be updated with the exact wavelength
+            parent_directory (str):             The directory in which to create the core folder 
+            spectrum (str or NemesisSpx):       Either the path to the .spx file to fit or a parsers.NemesisSpx object
+            reference (str or NemesisRef):      Either the path to the nemesis.ref file to use or a parsers.NemesisRef object
+            aerosols (str or AerosolRef):       Either the path to the aerosol.ref file to use or a parsers.AerosolRef object
+            solar_spectrum (str or NemesisSol): Path to the solar spectrum file to use or a parsers.NemesisSol object
+            cia_file (str):                     Path to the collision-indced absorbtion file to use
+            profiles List[str]:                 List of profiles.Profile objects to retrieve
+            planet (str):                       Name of the planet being observed. Must be one of 'jupiter', 'saturn', 'uranus', 'neptune' or 'titan'.
+            scattering (bool):                  Whether to run a scattering retrieval or not
+            forward (bool):                     Whether of not to run a forward model (ie. set number of iterations = 0)
+            num_iterations (int):               Number of iterations to run in the retrieval (if forward is set this has no effect)
+            num_layers (int):                   The number of atmospheric layers to simulate - for scattering runs the default maximum is 39.
+            min_pressure (float):               The pressure at the top of the model atmosphere
+            max_pressure (float):               The pressure at the bottom of the model atmosphere
+            instrument_ktables (str):           Either 'NIRSPEC' or 'MIRI'; determines which set of ktables to use.
+            use_gases (list):                   A list of the gases to use in the model, with names corresponding the to ktable names (eg. "ch4.combi.kta" would be ["ch4"])
+            sparsify_ktables (bool):            Whether to reduce the number of wavelengths in the ktables to only those that are required (may significantly speed up computation)
+            fmerror_factor (float):             The factor by which to multiply the error on the spectrum (see also, fmerror_pct and fmerror_value)
+            fmerror_pct (float):                If given, instead of using fmerror_factor or fmerror_value, use a flat percentage of the brightness (eg. 0.1 = 10%) (see also, fmerror_factor and fmerror_value)
+            fmerror_value (float):              If given, instead of using fmerror_factor or fmerror_pct, use a flat value in W/cm2/sr/um (see also, fmerror_factor and fmerror_pct)
+            cloud_cover (bool):                 If scattering mode is on, then this is the fractional cloud cover between 0 and 1 (usually doesn't need to be changed)
+            reference_wavelength (float):       If scattering mode is on, then normalise the cross-sections at the closest wavelength to this value in the .xsc file. This parameter will be updated with the exact wavelength
         """
         # Increment the global core counter and store local version
         global CORE_ID_COUNTER
@@ -129,7 +133,7 @@ class NemesisCore:
         self.sparsify_ktables = sparsify_ktables
         self.use_gases = use_gases
 
-        # Parse spx argument
+        # Parse fitting spectrum arguemnt
         self.change_spectrum(spectrum)
 
         # Parse ref file
@@ -137,6 +141,11 @@ class NemesisCore:
             reference = constants.PATH / f"data/{planet}/{planet}.ref"
             warnings.warn(f"No ref file specified. Using the default at {reference}")
         self.change_reference(reference)
+
+        # Parse sol file
+        if solar_spectrum is None:
+            solar_spectrum = parsers.NemesisSol(constants.NEMESIS_PATH / "radtrancode/raddata/solar_spec.dat")
+        self.change_solar_spectrum(solar_spectrum)
 
         # Set up instrument ktables
         if instrument_ktables.lower() not in ["nirspec", "miri"]:
@@ -168,20 +177,6 @@ class NemesisCore:
             self.cia_file = Path(cia_file).name
         else:
             self.cia_file = Path("mgRT_mgRV_40-400K_dnu4.0.tab")
-
-        # Set sol file if not set
-        if sol_file is not None:
-            sol_file = Path(sol_file)
-            # if the file can be found from here then it is not in raddata, so add it
-            if sol_file.exists():
-                add_to_raddata(Path(sol_file))
-
-            # If it isnt in raddata either, raise an error
-            elif not (constants.NEMESIS_PATH / "radtrancode/raddata" / sol_file).exists():
-                raise FileNotFoundError(f"Could not find {sol_file} here or in raddata/")
-            self.sol_file = sol_file 
-        else:
-            self.sol_file = Path("solar_spec.dat")
 
         # Set min/max pressures
         self.set_pressure_limits(max_pressure=max_pressure, 
@@ -304,6 +299,8 @@ class NemesisCore:
         self.reference.write(self.directory / "nemesis.ref")
 
     def _generate_spx(self):
+        if isinstance(self.spectrum, Path):
+            self.spectrum = parsers.NemesisSpx(self.spectrum)
         self.spectrum.write(self.directory / "nemesis.spx")
 
     def _generate_cia(self):
@@ -333,10 +330,9 @@ class NemesisCore:
             None
             
         Creates:
-            nemesis.cia
+            nemesis.sol
         """
-        with open(self.directory / "nemesis.sol", mode="w+") as file:
-            file.write(self.sol_file.name)
+        self.solar_spectrum.write_alias(self.directory / "nemesis.sol", add_to_raddata=False)
 
     def _generate_inp(self):
         """Generate the nemesis input file
@@ -491,7 +487,10 @@ class NemesisCore:
             if self.sparsify_ktables:
                 _sparsify_single_ktable(tuple(self.get_spx_wavelength_grid()), ktable, self.parent_directory / "ktables" / ktable.name)
             else:
-                shutil.copy(ktable, self.parent_directory / "ktables")
+                try:
+                    os.symlink(ktable, self.parent_directory / "ktables" / ktable.name)
+                except FileExistsError:
+                    pass
 
         # Create the kls file
         with open(self.directory / "nemesis.kls", mode="w+") as file:
@@ -546,7 +545,7 @@ class NemesisCore:
             # Catch any cases outside the wavelength range (upper)
             file.write(f"{100:.6e}  {0:.6e}\n")
 
-    def _generate_xsc(self):
+    def _generate_xsc(self, verbosity):
         """Run Makephase and Normxsc with the given inputs to generate the .xsc and phase files.
         
         Args:
@@ -565,11 +564,7 @@ class NemesisCore:
         #     return
 
         # Run Makephase and Normxsc
-        cwd = os.getcwd()
-        os.chdir(self.directory)
-        os.system("Makephase < makephase.inp > makephase.out")
-        os.system("Normxsc < normxsc.inp > normxsc.out")
-        os.chdir(cwd)
+        _cached_run_makephase(self.directory, verbosity=verbosity)
 
     def _generate_fcloud_ref(self):
         """Generate the fcloud.ref file
@@ -583,15 +578,11 @@ class NemesisCore:
         Creates:
             fcloud.ref"""
         
-        # Return immediately if there are no cloud layers defined
-        if self.num_aerosol_modes == 0:
-            return 
-        
         with open(self.directory / "fcloud.ref", mode="w+") as file:
             file.write(f"{len(self.reference.data)}    {self.num_aerosol_modes}\n")
             for height in self.reference.data.height:
                 file.write(f"      {height:> 9.4f}      {int(self.cloud_cover)}")
-                for n in range(self.num_aerosol_modes):
+                for n in range(max(self.num_aerosol_modes, 1)):
                     file.write("      1")
                 file.write("\n")
 
@@ -642,9 +633,16 @@ class NemesisCore:
             for name, profile in self.profiles.items():
                 if isinstance(profile, profiles_.AerosolProfile):
                     file.write(f"1\n{profile.radius} {profile.variance}\n2\n")
-                    if not profile.lookup:
-                        file.write(f"1\n{profile.real_n} {profile.imag_n}\n")
-                    else:
+                    if not profile.lookup: # manually specify refractive indicies
+                        if profile.is_single_refractive_index(): # single value over range
+                            file.write(f"1\n{profile.real_n} {profile.imag_n}\n")
+                        else: # spaced on arbitrary grid
+                            file.write(f"2\n")
+                            waves = np.arange(start, end+step, step)
+                            imagns = np.interp(waves, list(profile.imag_n.keys()), list(profile.imag_n.values()))
+                            for ni in imagns:
+                                file.write(f"{profile.real_n} {ni:.8e}\n")
+                    else: # use tabulated refractive indicies
                         file.write(f"{constants.MAKEPHASE_GASES[profile.n_lookup]}\n")
 
         # Generate the normxsc.inp file
@@ -838,7 +836,7 @@ class NemesisCore:
         self._generate_makephase_inp()
 
         if verbosity == 2: print(f"Generating nemesis.xsc and [hg]phase.dat files")
-        self._generate_xsc()
+        self._generate_xsc(verbosity)
 
         if verbosity == 2: print(f"Generating nemesis.apr")
         self._generate_apr()
@@ -904,6 +902,39 @@ class NemesisCore:
         else:
             self.aerosols_filepath = Path(new_aerosols).resolve()
             self.aerosols = parsers.AerosolRef(self.aerosols_filepath)
+
+    def copy_aerosol_data(self, copy_from):
+        base = Path("/data/nemesis/scat2/nemesis/upper_haze_grid_search_2/core_60/")
+        shutil.copy(base / "aerosol.prf", copy_from / "core_1/aerosol.ref")
+
+        for file in ["nemesis.xsc", "fcloud.ref", "hgphase*.dat", "PHASE*.DAT"]:
+            if "*" in file:
+                files = glob.glob(str(base / file))
+            else:
+                files = [base / file]
+
+            for f in files:
+                src = Path(f)
+                dst = copy_from / "core_1" / src.name
+
+                print(f"Copying {src} -> {dst}")
+                shutil.copy2(src, dst)
+
+    def change_solar_spectrum(self, new_sol):
+        """Replace the existing .sol file of the core with a new
+
+        Args:
+            new_sol (str or parsers.NemesisSol): The new sol file to use, either as a pathlike or a NemesisSol object
+
+        Returns:
+            None
+        """
+        if isinstance(new_sol, parsers.NemesisSol):
+            self.solar_spectrum_filepath = None
+            self.solar_spectrum = new_sol
+        else:
+            self.solar_spectrum_filepath = Path(new_sol).resolve()
+            self.solar_spectrum = parsers.NemesisSol(self.solar_spectrum_filepath)
 
     def get_new_id(self):
         """Refresh the core ID to a new sequential value and update the core directory accordingly.
@@ -995,7 +1026,7 @@ class NemesisCore:
         Returns:
             NemeisResult: The results object for the core"""
         
-        self.generate_core(verbosity=verbosity, confirm=confirm)
+        # self.generate_core(verbosity=verbosity, confirm=confirm)
         if verbosity > 0:
             print("Running NEMESIS...")
         subprocess.run("Nemesis < nemesis.nam | tee nemesis.prc", 
@@ -1007,29 +1038,38 @@ class NemesisCore:
             print("Finished!")
         return res
 
-    def generate_prior_distributions(self):
+    def generate_prior_profiles(self):
         """Run NEMESIS briefly in a temporary directory to generate the prior gas and aerosol profiles.
         
         Args:
             None
             
         Returns:
-            pd.DataFrame: Data from the .prf files generated. Columns are: 'height', 'pressure', 'temperature', the gas profiles, and the aerosol profiles
+            parsers.AerosolRef: The aerosol profile generated by NEMESIS
+            parsers.NemesisRef: The gas/temp profile generated by NEMESIS
         """
 
         # Change core directory to eleos/tmp temporarily
         old_dir = self.directory
-        self.directory = constants.PATH / "tmp"
+        old_par = self.parent_directory
+        tmpid = f"{np.random.randint(1e9, 1e10)}" 
+        self.directory = constants.PATH / "tmp" / tmpid / "core"
+        self.parent_directory = constants.PATH / "tmp" / tmpid
 
         # Clear tmp directory
-        for fp in self.directory.glob("*"):
-            if fp.is_file():
-                fp.unlink()
+        shutil.rmtree(self.parent_directory, ignore_errors=True)
+        self.directory.mkdir(parents=True, exist_ok=True)
 
-        # Copy any extra files from the main directory
+        # Copy input files from the main directory
         for filename in old_dir.glob("*"):
             if filename.is_file():
-                shutil.copy(filename, self.directory)
+                if filename.suffix not in (".prf", ".err", ".out", ".chi", ".prc"):
+                    shutil.copy(filename, self.directory)
+
+        # Copy ktables
+        src = old_par / "ktables"
+        dst = self.parent_directory / "ktables"
+        dst.symlink_to(src, target_is_directory=True)
 
         # Generate the core in this directory
         self.generate_core(verbosity=0, confirm=False)
@@ -1045,26 +1085,23 @@ class NemesisCore:
                 time.sleep(0.05)
                 if (self.directory / "aerosol.prf").exists() and (self.directory / "nemesis.prf").exists():
                     break
-        
+
         # Kill NEMESIS
+        time.sleep(0.05)
         os.killpg(os.getpgid(proc.pid), signal.SIGTERM)
 
         # Read in the .prf files
         aerosol_prf = parsers.AerosolRef(self.directory / "aerosol.prf")
         nemesis_prf = parsers.NemesisRef(self.directory / "nemesis.prf")
 
+        aerosol_prf.data["pressure"] = nemesis_prf.data["pressure"]
+
         # Reset the directory and clear tmp
-        for fp in self.directory.glob("*"):
-            if fp.is_file():
-                fp.unlink()
+        shutil.rmtree(self.parent_directory, ignore_errors=True)
         self.directory = old_dir
+        self.parent_directory = old_par
 
-        nemesis_prf.data.height = np.round(nemesis_prf.data.height * 1000).astype(int) 
-        aerosol_prf.data.height = np.round(aerosol_prf.data.height * 1000).astype(int) 
-        merged = pd.merge(nemesis_prf.data, aerosol_prf.data, on="height")
-        merged.height /= 1000
-
-        return merged
+        return aerosol_prf, nemesis_prf
 
     def get_aerosol_profile(self, id=None):
         """Given an aerosol ID (as used by NEMESIS) return the corresponding AerosolProfile object.
@@ -1106,7 +1143,7 @@ class NemesisCore:
             profile.aerosol_id = self.num_aerosol_modes
 
     def remove_profile(self, profile_label):
-        """Remove a profile. WIP - DOES NOT WORK FOR AEROSOL PROFILES
+        """Remove a profile.
         
         Args:
             profile_label (str): The label of the profile to remove
@@ -1115,12 +1152,18 @@ class NemesisCore:
             None
         """
         profile = self.profiles[profile_label]
+        del self.profiles[profile_label]
 
         if isinstance(profile, profiles_.AerosolProfile):
             # Decrement aerosol mode counter        
             self.num_aerosol_modes -= 1
 
-        del self.profiles[profile_label]
+            # Renumber all aerosol profiles
+            count = 1
+            for p in self.profiles.values():
+                if isinstance(p, profiles_.AerosolProfile):
+                    p.aerosol_id = count
+                    count += 1
 
     def fix_peak(self, central_wavelength, width, error=1e-15):
         """Set a region of the spectra to be fixed (ie. NEMESIS will be forced to match it). This is done internally by setting the
@@ -1182,7 +1225,7 @@ class NemesisCore:
         heights = self.reference.data.height
         return min(heights), max(heights)
 
-    def set_random_priors(self, parameters):
+    def set_random_priors(self, parameters=None):
         """For each eleos.mcmc.Parameter object given, set the values randomly based on a 
         normal distribution with mean and standard deviation given by the current param and param_error 
         
@@ -1192,6 +1235,9 @@ class NemesisCore:
         Returns:
             None
         """
+
+        if parameters is None:
+            parameters = mcmc.find_variable_parameters(self.profiles.values())
         
         for param in parameters:
             profile = self.profiles[param.profile_name]
@@ -1262,7 +1308,7 @@ class NemesisCore:
         
         return self.spectrum.wavelengths
 
-    def copy_core(self, new_parent_directory=None):
+    def copy(self, new_parent_directory=None):
         """Create a copy of the current core object with a new ID.
         
         Args:
@@ -1274,7 +1320,7 @@ class NemesisCore:
         
         new_core = copy.deepcopy(self)
         if new_parent_directory is not None:
-            new_core.parent_directory = new_parent_directory
+            new_core.parent_directory = Path(new_parent_directory)
         new_core.get_new_id()
         return new_core
 
@@ -1449,7 +1495,7 @@ def get_refractive_indicies(name, start_wl, end_wl, wl_step):
 
 def run_makephase(directory, 
                   start_wl, end_wl, norm_wl, wl_step,
-                  profiles=list(),):
+                  profiles=list()):
     
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
@@ -1466,7 +1512,7 @@ def run_makephase(directory,
         file.write(str(len(profiles)) + "\n")
         file.write("1\n")
         utils.write_nums(file, s, e, wl_step)
-        file.write("nemesis\n")
+        file.write(f"nemesis\n")
         file.write("y\n")
 
         for profile in profiles:
@@ -1476,6 +1522,8 @@ def run_makephase(directory,
                     file.write(f"1\n{profile.real_n} {profile.imag_n}\n")
                 else:
                     file.write(f"{constants.MAKEPHASE_GASES[profile.n_lookup]}\n")
+                    if profile.n_lookup == "Tholins":
+                        file.write("1\n")
             else:
                 raise ValueError("Only AerosolProfiles can be used.")
 
@@ -1485,9 +1533,38 @@ def run_makephase(directory,
 
     cwd = os.getcwd()
     os.chdir(directory)
-    os.system("Makephase < makephase.inp > makephase.out")
-    os.system("Normxsc < normxsc.inp > normxsc.out")
+    os.system(f"Makephase < makephase.inp > makephase.out")
+    os.system(f"Normxsc < normxsc.inp > normxsc.out")
     os.chdir(cwd)
+
+
+def _cached_run_makephase(directory, verbosity=0):
+    cwd = os.getcwd()
+
+    key = hashlib.sha256(
+            (utils.file_hash(directory / "makephase.inp") +
+            utils.file_hash(directory / "normxsc.inp")).encode()
+        ).hexdigest()
+    cache_dir = constants.PATH / ".cache/makephase" / key
+
+    if not cache_dir.exists():
+        if verbosity == 2: print("Makephase cache miss")
+        cache_dir.mkdir(parents=True)
+        shutil.copy(directory / "makephase.inp", cache_dir)
+        shutil.copy(directory / "normxsc.inp", cache_dir)
+        os.chdir(cache_dir)
+        os.system("Makephase < makephase.inp > makephase.out")
+        os.system("Normxsc < normxsc.inp > normxsc.out")
+    else:
+        if verbosity == 2: print("Makephase cache hit")
+        os.chdir(cache_dir)
+    
+    for file in cache_dir.iterdir():
+        if verbosity == 2: print(f"Copying file {file}")
+        shutil.copy(file, directory)
+
+    os.chdir(cwd)
+
 
 
 # Core creation/loading functions
@@ -1549,7 +1626,9 @@ def create_sensitivity_analysis(parent_directory,
                                 generate_cores=True, 
                                 factors=(0.80, 0.90, 0.95, 1.05, 1.10, 1.20), 
                                 forward=True,
-                                parameters=None):
+                                verbosity=0,
+                                parameters=None,
+                                log_parameters=list()):
     
     """
     Create a sensitivity analysis on the template core. This is done by creating a new core for 
@@ -1563,71 +1642,65 @@ def create_sensitivity_analysis(parent_directory,
                                      need to include 1.00 as a factor as this is equivalent to the baseline which is already calculated
         forward (bool):              Whether to run forward models or retrievals. Use forward models to see where each parameter affects each 
                                      spectrum and retrievals to test if different priors converge on different solutions
-        parameters (List[mcmc.Parameter]): Optionally, a list of specific parameters to vary. 
-                                     If None, all variable parameters will be varied.
-                                     
+        parameters (List[mcmc.Parameter]): Optionally, a list of specific parameters to vary. If None, all variable parameters will be varied.
+        log_parameters (List[mcmc.Parameter]): Optionally, a list of parameters that should be varied in logspace. 
+                                               These should be included in parameters. If parameters is not specified, any pressure-related 
+                                               parameters and imag_n will be varied in logspace automatically.
+
     Returns:
         List[NemesisCore]: A list of new cores with the parameters varied
     """
-    
+
+    # Set up new core numbering scheme
     global CORE_ID_COUNTER
     reset_core_numbering()
-    parent_directory = Path(parent_directory)
-    parent_directory.mkdir(parents=True)
-
-    # Create a file that stored which parameters were varied and by how much for each core
-    file = open(f"{parent_directory}/sensitivity_analysis.txt", "w+")
-    file.write("Core ID,Profile Label,Parameter,Base Value,Shifted Value,Factor\n")
-
     CORE_ID_COUNTER += 1
+
+    # Ensure all paths are set correctly
+    parent_directory = Path(parent_directory)
+    parent_directory.mkdir(parents=True, exist_ok=True)
     template_core.parent_directory = parent_directory
     template_core.directory = parent_directory / f"core_{CORE_ID_COUNTER}"
     template_core.forward = forward
     cores = [template_core]
 
+    # Create a file that stored which parameters were varied and by how much for each core
+    file = open(f"{parent_directory}/sensitivity_analysis.txt", "w+")
+    file.write("Core ID,Profile Label,Parameter,Base Value,Shifted Value,Factor,Log\n")
+
     # Generate the template core if requested
     if generate_cores:
-        template_core.forward = True
-        template_core.generate_core()
+        template_core.generate_core(verbosity=verbosity)
+
+    # Construct parameter list if not given
+    if parameters is None:
+        parameters =  mcmc.find_variable_parameters(template_core.profiles.values())
+        log_parameters = [p for p in parameters if "pressure" in p.param_name or "imag_n" in p.param_name]
 
     # Iterate through every parameter in every profile in the template core
-    for param in parameters:
+    for param in tqdm(parameters, desc="Generating cores"):
+        if verbosity >= 1: print("Generating", param)
         base_value = getattr(template_core.profiles[param.profile_name], param.param_name)
+
         for factor in factors:
             core = copy.deepcopy(template_core)
             core.get_new_id()
             core.forward = forward
-            setattr(core.profiles[param.profile_name], param.param_name, base_value * factor)
+
+            if param in log_parameters:
+                value = base_value ** factor
+                log = True
+            else:
+                value =  base_value * factor
+                log = False
+
+            setattr(core.profiles[param.profile_name], param.param_name, value)
             cores.append(core)
-            file.write(f"{core.id_},{param.profile_name},{param.param_name},{base_value},{base_value * factor},{factor}\n")
-            file.flush()
+            file.write(f"{core.id_},{param.profile_name},{param.param_name},{base_value},{value},{factor},{log}\n")
+
             if generate_cores:
-                core.generate_core()
-            
-
-    # for label, params in template_core.get_profile_parameter_names().items():
-    #     file.flush()
-
-    #     for param in params:
-    #         # Vary the parameter value by 80% to 120%
-    #         for factor in factors:
-
-    #             # Copy the core (deep copy to make sure nothing is passed by reference)
-    #             core = copy.deepcopy(template_core)
-    #             core.parent_directory = parent_directory
-    #             core.get_new_id()
-    #             core.forward = forward
-
-    #             # Get and modify the parameter value and log it in the parameter file
-    #             base_value = getattr(core.profiles[label], param)
-    #             setattr(core.profiles[label], param, base_value * factor)
-    #             cores.append(core)
-    #             file.write(f"{core.id_},{label},{param},{base_value},{base_value * factor},{factor}\n")
-
-    #             # Generate the cores if requested
-    #             if generate_cores:
-    #                 core.generate_core()
-
+                core.generate_core(verbosity=verbosity)
+         
     # Always close your files, kids!
     file.close()
     
@@ -1781,25 +1854,21 @@ def clear_parent_directory(parent_directory, confirm=True):
 
 
 def generate_alice_job(parent_directory, 
-                       python_env_name, 
-                       memory=16, 
+                       memory="8gb", 
                        hours=0,
                        minutes=0,
-                       username=None,
                        notify=("end", "fail"),
                        type_="normal"):
     """Generate an sbatch submission script for use on ALICE. The job is an array job over all the specified cores.
     After running NEMESIS it will run Eleos to create some summary plots in the parent/core_N/plots directory
     
     Args:
-        parent_directory (str): The directory containing the NEMESIS core directories to be run
-        python_env_name (str): The name of a conda environment which has Eleos installed
-        memory (int): The amount of memory to use as a string, formatted like '100mb' or '16gb'
-        hours (int): The number of hours to schedule the job for
-        minutes (int): The number of minutes to schedule the job for
-        username (str): The username of the user running the job (eg, scat2, lnf2)
+        parent_directory (str):    The directory containing the NEMESIS core directories to be run
+        memory (int):              The amount of memory to use as a string, formatted like '100mb' or '16gb'
+        hours (int):               The number of hours to schedule the job for
+        minutes (int):             The number of minutes to schedule the job for
         notify (List[str] or str): What email notifications to send. Can be any combination of 'begin', 'end', 'fail'
-        type_ (str): The type of job to run. Can be 'normal' or 'sensitivity'. This will determine how Eleos is run at the end of the job.
+        type_ (str):               The type of job to run. Can be 'normal' or 'sensitivity'. This will determine how Eleos is run at the end of the job.
         
     Returns:
         None
@@ -1810,6 +1879,7 @@ def generate_alice_job(parent_directory,
     parent_directory = Path(parent_directory)
     script_path = parent_directory / "submitjob.sh"
     ncores = len(list(parent_directory.glob("core_*")))
+    username = os.popen('whoami').read().rstrip()
 
     # Coerce notify to an iterable and create the string
     try:
@@ -1832,7 +1902,6 @@ def generate_alice_job(parent_directory,
         out = out.replace("<N_CORES>", str(ncores))
         out = out.replace("<CORE_DIR>", str(parent_directory.resolve()))
         out = out.replace("<USERNAME>", str(username))
-        out = out.replace("<PYTHON_ENV>", python_env_name)
         out = out.replace("<NOTIFY>", notify_str)
 
     if type_ == "sensitivity":

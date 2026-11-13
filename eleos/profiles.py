@@ -6,6 +6,7 @@ aerosols (AerosolProfile)"""
 from collections import defaultdict
 from pathlib import Path
 import re
+import warnings
 import numpy as np
 
 from . import constants
@@ -320,8 +321,6 @@ class AerosolProfile(Profile):
 
         Use refractive index from lookup table (retrieved; ie with an attached 444):
         AerosolProfile(shape, radius, radius_error, variance, variance_error, n_lookup)
-
-        Currently you cannot specify an arbitrary list of refractive index points to use, but this will be added!
         
         Args:
             shape (Shape): A Shape object to use for the profile shape
@@ -331,11 +330,13 @@ class AerosolProfile(Profile):
             variance (float): Variance of the particle size distribution in microns (gamma distribution)
             n_lookup (str): If given, use the refractive indicies of this gas (eg. 'CH4')
             real_n (float): If n_lookup is not given, then use this as the real part of the refractive index
-            imag_n (float): If n_lookup is not given, then use this as the imaginary part of the refractive index,
+            imag_n (float | dict): If n_lookup is not given, then use this as the imaginary part of the refractive index. If a dict
+                                   is given, must be of the form {wavelength: (imag_n)}      
             retrieve_optical (bool): Whether to retrieve the optical porperties of the aerosol (this adds a 444 profile in NEMESIS)
             radius_error (float): If retrieve_optical is set, the error used for the particle radius prior
             variance_error (float): If retrieve_optical is set, the error used for the particle size variance prior
-            imag_n_error (float): If retrieve_optical is set, the error used for the imaginary part of the refractive index
+            imag_n_error (float | dict): If retrieve_optical is set, the error used for the imaginary part of the refractive index. 
+                                         If a dict is given, must be of the form {wavelength: (imag_n_error)}      
             label (str): A label to assosiate with this profile
         """
 
@@ -352,6 +353,14 @@ class AerosolProfile(Profile):
         self.radius = radius
         self.variance = variance
 
+        # Set errors
+        if radius_error is not None:
+            self.radius_error = radius_error
+        if variance_error is not None:
+            self.variance_error = variance_error
+        if imag_n_error is not None:
+            self.imag_n_error = imag_n_error
+
         # Set either n_lookup or real_n and imag_n
         if n_lookup is None:
             self.real_n = real_n
@@ -363,18 +372,28 @@ class AerosolProfile(Profile):
 
         # Set the prior errors if retrieving
         if retrieve_optical:
-            self.CONSTANTS = self.shape.CONSTANTS + ["real_n"]
-            self.VARIABLES = self.shape.VARIABLES + ["radius", "variance", "imag_n"]
-            self.radius_error = radius_error
-            self.variance_error = variance_error
-            self.imag_n_error = imag_n_error
+            self.enable_444(radius_error, variance_error, imag_n_error)
             if radius_error is None or variance_error is None or imag_n_error is None:
                 raise ValueError("Cannot retrieve optical properties without specified errors. Did you remember to set radius_error, variance_error, or imag_n_error?")
         else:
-            self.CONSTANTS = self.shape.CONSTANTS + ["radius", "variance", "real_n", "imag_n"]
-            self.VARIABLES = self.shape.VARIABLES
-            if radius_error is not None or variance_error is not None or imag_n_error is not None:
-                raise ValueError("Cannot specify errors for radius/variance.imag_n without retrieving optical peroperties. Did you forget to set retrieve_optical=True?")
+            self.disable_444()
+            warnings.warn("Not retrieving optical properties. If you want to retrieve them, set retrieve_optical=True and specify radius_error, variance_error, and imag_n_error")
+
+    def disable_444(self):
+        self.CONSTANTS = self.shape.CONSTANTS + ["radius", "variance", "real_n", "imag_n"]
+        self.VARIABLES = self.shape.VARIABLES
+        self.retrieve_optical = False
+
+    def enable_444(self, radius_error=None, variance_error=None, imag_n_error=None):
+        self.CONSTANTS = self.shape.CONSTANTS + ["real_n"]
+        self.VARIABLES = self.shape.VARIABLES + ["radius", "variance", "imag_n"]
+        self.retrieve_optical = True
+        if radius_error is not None:
+            self.radius_error = radius_error
+        if variance_error is not None:
+            self.variance_error = variance_error
+        if imag_n_error is not None:
+            self.imag_n_error = imag_n_error
 
     def __repr__(self):
         return f"<AerosolProfile {self.label} [{self.create_nemesis_string()}]>"
@@ -487,29 +506,46 @@ class AerosolProfile(Profile):
 
         # Get the wavelengths in the xsc file
         xsc_parser = parsers.NemesisXsc(directory / "nemesis.xsc")
-        nwave = len(xsc_parser.xsc.wavelength)
         refwave = self.core.reference_wavelength
 
         # Get the refractive indicies in the Makephase output or from the given attributes
         if self.lookup:
             refindexes = parsers.MakephaseOut(directory / "makephase.out").data
-            imag_ns = refindexes[self.label + " imag"]
             wi,_ = utils.find_nearest(refindexes.wavelength, refwave)
+            code = 0
+            wvs = xsc_parser.xsc.wavelength
+            imag_ns = refindexes[self.label + " imag"]
+            imag_n_errs = [self.imag_n_error for x in range(len(wvs))]
             ref_real_n = refindexes[self.label + " imag"].iloc[wi]
+
+        elif self.is_single_refractive_index():
+            code = -1
+            wvs = xsc_parser.xsc.wavelength
+            imag_ns = [self.imag_n for x in range(len(wvs))]
+            imag_n_errs = [self.imag_n_error for x in range(len(wvs))]
+            ref_real_n = self.real_n
+
         else:
-            imag_ns = [self.imag_n for x in range(nwave)]
+            code = 1
+            wvs = self.imag_n.keys()
+            imag_ns = self.imag_n.values()
+            imag_n_errs = self.imag_n_error.values()
             ref_real_n = self.real_n
 
         # Generate cloudfN.dat
         with open(directory / f"cloudf{self.aerosol_id}.dat", mode="w+") as file:
             utils.write_nums(file, self.radius, self.radius_error)
             utils.write_nums(file, self.variance, self.variance_error)
-            file.write(f"{nwave}    {0 if self.lookup else -1}\n")
+            file.write(f"{len(wvs)}    {code}\n")
             utils.write_nums(file, refwave, ref_real_n)
             utils.write_nums(file, refwave)
-            for imag_n, wavelength in zip(imag_ns, xsc_parser.xsc.wavelength):
-                utils.write_nums(file, wavelength, imag_n, self.imag_n_error)
+            for wavelength, imag_n, imag_n_err in zip(wvs, imag_ns, imag_n_errs):
+                utils.write_nums(file, wavelength, imag_n, imag_n_err)
 
+    def is_single_refractive_index(self):
+        return isinstance(self.imag_n, (int, float))
+
+    # to fix #
     def check_validity(self):
         conditions = [
             self.radius > 0,

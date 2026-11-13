@@ -15,9 +15,14 @@ class Parameter:
         self.profile_name = profile_name
         self.param_name = param_name
 
-    def __str__(self):
+    def ret(self):
+        return Parameter(self.profile_name, "retrieved_"+self.param_name)
+
+    def __repr__(self):
         return f"<Parameter: {self.profile_name} {self.param_name}>"
-    __repr__ = __str__
+
+    def __str__(self):
+        return f"{self.profile_name} {self.param_name}"
 
 
 def find_variable_parameters(profiles, pct_threshold=1e-5):

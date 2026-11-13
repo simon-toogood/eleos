@@ -29,6 +29,7 @@ dependencies = [
     "emcee",
     "h5py",
     "schwimmbad",
+    "cmasher",
 ]
 
 [project.urls]

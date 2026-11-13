@@ -1,98 +1,14 @@
 import numpy as np
 import matplotlib.pyplot as plt
-import matplotlib as mpl
-import os
 import re
+import hashlib
+from functools import wraps
+import shutil
+import os
+import string
 
 
-# Kramers-Kronig relations??
-def reconstruct_real_n(wavenumbers, imag_n, ref_wavenumber, ref_realn, tol=1e-12):
-    """
-    Kramers-Kronig reconstruction of the real refractive-index spectrum.
-
-    Parameters
-    ----------
-    wavenumbers : array_like
-        Wavenumbers (length N). Can be ascending or descending.
-    imag_n : array_like
-        Imaginary part of refractive index (length N).
-    ref_wavenumber : float
-        Reference wavenumber at which real part ref_realn is specified.
-    ref_realn : float
-        Real part of refractive index at ref_wavenumber.
-    tol : float, optional
-        Small tolerance for comparing floating values to zero.
-
-    Returns
-    -------
-    n : ndarray
-        Reconstructed real part of refractive index (length N), in the same
-        ordering as the input `wavenumbers`.
-    km : float
-        Interpolated value of imaginary refractive index at ref_wavenumber.
-    """
-    wavenumbers = np.asarray(wavenumbers, dtype=float)
-    imag_n = np.asarray(imag_n, dtype=float)
-
-    if wavenumbers.shape != imag_n.shape:
-        raise ValueError("wavenumbers and imag_n must have the same shape")
-
-    npoints = wavenumbers.size
-
-    # Ensure arrays are ascending in va, and remember if we reversed them
-    if wavenumbers[0] > wavenumbers[-1]:
-        va = wavenumbers[::-1].copy()
-        ka = imag_n[::-1].copy()
-        irev = True
-    else:
-        va = wavenumbers.copy()
-        ka = imag_n.copy()
-        irev = False
-
-    # Interpolate ka at ref_wavenumber to get km (equivalent to verint in Fortran)
-    # np.interp expects increasing x (va) which we ensured.
-    km = float(np.interp(ref_wavenumber, va, ka))
-
-    pi = np.pi
-    na = np.zeros_like(va)
-
-    # Main integration loop (discrete trapezoidal integration)
-    for i in range(npoints):
-        v = va[i]
-        # compute y array
-        y = np.zeros(npoints, dtype=float)
-
-        for j in range(npoints):
-            alpha = (va[j] ** 2) - (v ** 2)
-            beta  = (va[j] ** 2) - (ref_wavenumber  ** 2)
-
-            # only compute when neither divisor is (approximately) zero
-            if (abs(alpha) > tol) and (abs(beta) > tol):
-                d1 = ka[j] * va[j] - ka[i] * va[i]
-                d2 = ka[j] * va[j] - km * ref_wavenumber
-                y[j] = d1 / alpha - d2 / beta
-            else:
-                # keep y[j] = 0 when alpha==0 or beta==0 (as in Fortran)
-                y[j] = 0.0
-
-        # trapezoidal integration over va: Sum = integral y(v') dv'
-        # use adjacent intervals dv = va[l+1] - va[l]
-        Sum = 0.0
-        # If there is only one point, Sum remains 0
-        for l in range(npoints - 1):
-            dv = va[l + 1] - va[l]
-            Sum += 0.5 * (y[l] + y[l + 1]) * dv
-
-        na[i] = ref_realn + (2.0 / pi) * Sum
-
-    # reverse back if input was reversed
-    if irev:
-        n_out = na[::-1].copy()
-    else:
-        n_out = na.copy()
-
-    return n_out, km
-
+from . import constants
 
 # Spectral lineshapes
 
@@ -146,7 +62,13 @@ def nanaverage(data, weights=None, **kwargs):
     return np.ma.average(ma, weights=weights, **kwargs)
 
 
+
 # Matplotlib extension functions
+
+RADIANCE_LABEL_W = "Radiance (W cm$^{-2}$ sr$^{-1}$ µm$^{-1}$)" #: Properly formatted label for the radiance in units of W/cm2/sr/um
+RADIANCE_LABEL_uW  = "Radiance (µW cm$^{-2}$ sr$^{-1}$ µm$^{-1}$)" #: Properly formatted label for the radiance in units of uW/cm2/sr/um 
+RADIANCE_LABEL_nW  = "Radiance (nW cm$^{-2}$ sr$^{-1}$ µm$^{-1}$)" #: Properly formatted label for the radiance in units of nW/cm2/sr/um 
+RADIANCE_LABEL_Wm = "Radiance (W m$^{-2}$ sr$^{-1}$ µm$^{-1}$)" #: Properly formatted label for the radiance in units of W/m2/sr/um (h3ppy units)
 
 def label_axes(axs, labels="abcdefghijklmnopqrstuvwxyz", append=")", loc=(0.01,0.01), **kwargs):
     """Take a list of mpl Axes and add alhpabetic labels to them.
@@ -155,7 +77,7 @@ def label_axes(axs, labels="abcdefghijklmnopqrstuvwxyz", append=")", loc=(0.01,0
         axs (mpl.Axes):            The axes to label
         labels (Iterable):         The labels to use (default is lowercase alphabet)
         append (str):              What to put after the label. default is ')' for a final label of eg. 'a)'
-        log (Tuple[float, float]): The location of the label in Axes coordinates
+        loc (Tuple[float, float]): The location of the label in Axes coordinates
         **kwargs:                  Additional arguments passed to ax.text()
     
     Returns:
@@ -170,27 +92,49 @@ def label_axes(axs, labels="abcdefghijklmnopqrstuvwxyz", append=")", loc=(0.01,0
         ax.text(loc[0], loc[1], next(labeliter) + append, transform=ax.transAxes, **kwargs)
 
 
-# String / file operation functions
+def plotting(func):
+    @wraps(func)
+    def wrapper(self, *args, ax=None, **kwargs):
+        if ax is None:
+            fig, ax = plt.subplots(1, 1)
+        else:
+            fig = ax.get_figure()
+        f = func(self, *args, ax=ax, **kwargs)
+        if isinstance(f, tuple):
+            return fig, ax, *f
 
-def read_between_lines(file, start, end):
-    """Take in an open file object and get the data between line numbers 'start' and 'end'.
-    It is inclusive of start and exclusive of end (ie. start <= line < end)
-    
-    Args:
-        file: File-like object to read from
-        start: Line number to start reading from
-        end: Line number to stop reading at
-        
-    Returns:
-        str: File data
-    """
-    file.seek(0)
-    lines = []
-    for i, line in enumerate(file):
-        if start <= i < end:
-            lines.append(line)
-    return "".join(lines)
+        return fig, ax, f
+    return wrapper
 
+
+def plotting_altitude(func):
+    @wraps(func)
+    def wrapper(self, *args, ax=None, pressure=True, **kwargs):
+        if ax is None:
+            fig, ax = plt.subplots(1, 1)
+        else:
+            fig = ax.get_figure()
+        if pressure:
+            ax.set_yscale("log")
+            ax.set_ylabel("Pressure (bar)")
+            try:
+                ax.set_ylim(self.core.max_pressure, self.core.min_pressure)
+            except AttributeError:
+                ax.set_ylim(10, 1e-3)
+        else:
+            ax.set_ylabel("Height (km)")
+        f = func(self, *args, ax=ax, pressure=pressure, **kwargs)
+        if isinstance(f, tuple):
+            return fig, ax, *f
+        elif f is None:
+            return fig, ax
+        else:
+            return fig, ax, f
+    return wrapper
+
+
+
+# String operations
 
 def indent(string, level=1, spaces_per_level=4):
     """Take in a string and return the same string indented at each line break.
@@ -206,15 +150,6 @@ def indent(string, level=1, spaces_per_level=4):
     lines = str(string).split("\n")
     ind = " "*spaces_per_level*level
     return "\n".join([ind+l for l in lines])
-
-
-def write_nums(file, *nums, sep="    ", dp=6):
-    for i, n in enumerate(nums):
-        file.write(f"{n:.{dp}e}")
-        if i != len(nums)-1:
-            file.write(sep)
-        else:
-            file.write("\n")
 
 
 def generate_ascii_table(title, headers, row_headers, rows):
@@ -338,3 +273,74 @@ def remove_ansi_colors(string):
     out = ansi_escape.sub('', str(string))
     return out
 
+
+
+# File operations
+
+def read_between_lines(file, start, end):
+    """Take in an open file object and get the data between line numbers 'start' and 'end'.
+    It is inclusive of start and exclusive of end (ie. start <= line < end)
+    
+    Args:
+        file: File-like object to read from
+        start: Line number to start reading from
+        end: Line number to stop reading at
+        
+    Returns:
+        str: File data
+    """
+    file.seek(0)
+    lines = []
+    for i, line in enumerate(file):
+        if start <= i < end:
+            lines.append(line)
+    return "".join(lines)
+
+
+def write_nums(file, *nums, sep="    ", dp=6):
+    for i, n in enumerate(nums):
+        file.write(f"{n:.{dp}e}")
+        if i != len(nums)-1:
+            file.write(sep)
+        else:
+            file.write("\n")
+
+
+def file_hash(path):
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def clear_cache():
+    shutil.rmtree(constants.PATH / ".cache", ignore_errors=True)
+    (constants.PATH / ".cache").mkdir()
+
+
+def get_cache_size():
+    total_size = 0
+    for dirpath, dirnames, filenames in os.walk(constants.PATH / ".cache"):
+        for f in filenames:
+            fp = os.path.join(dirpath, f)
+            total_size += os.path.getsize(fp)
+    return total_size
+
+
+# Misc functions
+
+def map_dicts_kv(dict1, dict2):
+    """Join two dicts using the values in dict1 as the keys in dict2.
+    
+    For example:
+    ```
+    dict1 = {1: 'a', 2: 'b'}
+    dict2 = {1: 'apple', 2: 'banana'}
+
+    map_dicts_kv(dict1, dict2)
+
+    >>> {'a': 'apple', 'b': 'banana'}```
+
+    """
+    return {dict1[k]: v for k, v in dict2.items()}

@@ -7,3 +7,5 @@ eleos.code-workspace
 eleos/tmp
 eleos/__pycache__
 dev_*
+scratch.py
+eleos/.cache/**

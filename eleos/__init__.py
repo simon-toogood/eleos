@@ -9,7 +9,6 @@ Modules available directly under `eleos`:
 - results
 - shapes
 - spectra
-- spx
 - utils
 """
 
@@ -22,7 +21,6 @@ __all__ = [
     "results",
     "shapes",
     "spectra",
-    "spx",
     "utils",
 ]
 
@@ -35,6 +33,5 @@ from . import (
     results,
     shapes,
     spectra,
-    spx,
     utils,
 )

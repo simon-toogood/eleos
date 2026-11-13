@@ -1,5 +1,5 @@
 """ 
-Each Shape object represents a differnet model in NEMESIS. Eg. ``Shape1`` represents profile shape 1 which is a constant VMR 
+Each Shape object represents a different model in NEMESIS. Eg. ``Shape1`` represents profile 1 which is a constant VMR 
 up to a knee pressure then a fractional scale height. For a ful list of possible models see the NEMESIS manual. Please note: 
 due to the large number of profile shapes NEMESIS supports, 
 
@@ -222,7 +222,7 @@ class Shape2(Shape):
 
 @shapeclass
 class Shape4(Shape):
-    """Very similar to Shape1, but knee pressure is also a variable parameter.
+    """Very similar to Shape1, but knee pressure is also a variable parameter. The profile is capped at 0 above the tropopause pressure
 
     Parameters
     ----------
@@ -238,9 +238,11 @@ class Shape4(Shape):
         Fractional scale height.
     fsh_error : float
         Error estimate for fsh.
+    tropopause_pressure:
+        Height above which the profile is set to 0
     """
     ID: ClassVar[int] = 4
-    CONSTANTS: ClassVar[list[str]] = []
+    CONSTANTS: ClassVar[list[str]] = ["tropopause_pressure"]
     VARIABLES: ClassVar[list[str]] = ["deep_vmr", "fsh", "knee_pressure"]
     knee_pressure: float
     knee_pressure_error: float
@@ -248,12 +250,37 @@ class Shape4(Shape):
     deep_vmr_error: float
     fsh: float
     fsh_error: float
+    tropopause_pressure: float
 
     def generate_apr_data(self):
-        return f"{self.knee_pressure} {self.knee_pressure_error}\n{self.deep_vmr} {self.deep_vmr_error}\n{self.fsh} {self.fsh_error}"
+        return f"{self.knee_pressure} {self.knee_pressure_error}\n{self.deep_vmr} {self.deep_vmr_error}\n{self.fsh} {self.fsh_error}\n{self.tropopause_pressure}"
 
     def check_validity(self):
-        return self.deep_vmr >= 0 and self.fsh > 0 and self.knee_pressure > 0
+        return self.deep_vmr >= 0 and self.fsh > 0 and self.knee_pressure > 0 and self.tropopause_pressure < self.knee_pressure
+
+
+@shapeclass
+class Shape11(Shape):
+    """Condesning species with no associated cloud. Profile is capped to 0 above 0.1 bar
+
+    Parameters
+    ----------
+    deep_vmr
+    rel_humidity
+    """
+    ID: ClassVar[int] = 11
+    CONSTANTS: ClassVar[list[str]] = []
+    VARIABLES: ClassVar[list[str]] = ["deep_vmr", "rel_humidity"]
+    deep_vmr: float
+    deep_vmr_error: float
+    rel_humidity: float
+    rel_humidity_error: float
+
+    def generate_apr_data(self):
+        return f"{self.deep_vmr} {self.deep_vmr_error}\n{self.rel_humidity} {self.rel_humidity_error}\n0"
+
+    def check_validity(self):
+        return self.deep_vmr >= 0 and self.rel_humidity > 0
 
 
 @shapeclass
@@ -450,4 +477,4 @@ def get_shape_from_id(id_):
             return shape_class
 
 
-ALL_SHAPES = [Shape0, Shape1, Shape2, Shape4, Shape20, Shape32, Shape37, Shape47, Shape48] #: A list of all the Shape classes
+ALL_SHAPES = [Shape0, Shape1, Shape2, Shape4, Shape11, Shape20, Shape32, Shape37, Shape47, Shape48] #: A list of all the Shape classes
